@@ -11,7 +11,7 @@ const CLASSES = [
 export default function GuruPage() {
   return (
     <Panel title="INVESTMENT GURU" meta="PICK ASSET CLASS · ENTER TICKER">
-      <div className="grid grid-cols-2 gap-3 mt-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
         {CLASSES.map((c) => (
           <Link
             key={c.slug}

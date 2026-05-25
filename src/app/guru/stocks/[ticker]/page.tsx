@@ -9,7 +9,7 @@ export default async function Page({
   const { ticker } = await params;
   const t = decodeURIComponent(ticker).toUpperCase();
   return (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
       <Panel title={`STOCK · ${t}`} meta="STUB · MARKET DATA PHASE 2">
         <Row k="Last" v="$ —" tone="muted" />
         <Row k="Day Change" v="—" tone="muted" />

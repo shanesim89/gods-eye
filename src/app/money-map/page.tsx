@@ -4,7 +4,7 @@ import { BigNum } from "@/components/ui/BigNum";
 
 export default function MoneyMapPage() {
   return (
-    <div className="grid grid-cols-2 gap-3 h-[calc(100vh-120px)]">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 lg:h-[calc(100vh-120px)]">
       <Panel title="NET WORTH" meta="STUB · NO DATA YET">
         <BigNum
           currency="USD"
