@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { UserButton, useAuth } from "@clerk/nextjs";
 
 const NAV = [
   { href: "/money-map", label: "MONEY MAP" },
@@ -28,6 +29,7 @@ function useClock() {
 export function Topbar() {
   const pathname = usePathname();
   const now = useClock();
+  const { isSignedIn, isLoaded } = useAuth();
   return (
     <div className="bg-black amber-border-b px-3 py-1.5 flex flex-wrap justify-between items-center gap-y-1 text-[11px]">
       <div className="text-amber font-bold tracking-[2px] shrink-0">
@@ -49,8 +51,13 @@ export function Topbar() {
           );
         })}
       </div>
-      <div className="text-muted shrink-0 order-2 sm:order-3 text-[10px] sm:text-[11px]">
-        USER: SHANE · BASE: USD · {now || "—"}
+      <div className="text-muted shrink-0 order-2 sm:order-3 text-[10px] sm:text-[11px] flex items-center gap-3">
+        <span>BASE: USD · {now || "—"}</span>
+        {isLoaded && isSignedIn ? (
+          <UserButton />
+        ) : isLoaded ? (
+          <Link href="/sign-in" className="text-amber">SIGN IN</Link>
+        ) : null}
       </div>
     </div>
   );
