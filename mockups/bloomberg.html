@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>God's Eye — Bloomberg Terminal Aesthetic</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --panel: #121212;
+    --border: #1f1f1f;
+    --grid: #161616;
+    --amber: #ffb000;
+    --green: #00ff7f;
+    --red: #ff3b3b;
+    --cyan: #00e5ff;
+    --text: #d4d4d4;
+    --muted: #6b6b6b;
+    --dim: #3a3a3a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    min-height: 100vh;
+  }
+  .topbar {
+    background: #000;
+    border-bottom: 1px solid var(--amber);
+    padding: 6px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+  }
+  .topbar .brand { color: var(--amber); font-weight: 700; letter-spacing: 2px; }
+  .topbar .nav span { margin: 0 10px; color: var(--muted); cursor: pointer; }
+  .topbar .nav span.active { color: var(--amber); }
+  .topbar .nav span:hover { color: var(--text); }
+  .ticker-strip {
+    background: #000;
+    border-bottom: 1px solid var(--border);
+    padding: 4px 14px;
+    display: flex;
+    gap: 28px;
+    font-size: 11px;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .ticker-strip .item { display: inline-flex; gap: 6px; }
+  .ticker-strip .sym { color: var(--text); }
+  .ticker-strip .up { color: var(--green); }
+  .ticker-strip .down { color: var(--red); }
+  .container {
+    padding: 12px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto;
+    gap: 12px;
+    height: calc(100vh - 60px);
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .panel-header {
+    background: #000;
+    border-bottom: 1px solid var(--border);
+    padding: 6px 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    color: var(--amber);
+    text-transform: uppercase;
+  }
+  .panel-header .meta { color: var(--muted); }
+  .panel-body { padding: 12px; flex: 1; overflow: auto; }
+  .big-num {
+    font-size: 36px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: 1px;
+    font-variant-numeric: tabular-nums;
+  }
+  .big-num .currency { color: var(--muted); font-size: 16px; margin-right: 6px; }
+  .delta-up { color: var(--green); font-size: 12px; margin-top: 4px; }
+  .delta-down { color: var(--red); font-size: 12px; margin-top: 4px; }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px dotted var(--dim);
+    font-size: 11px;
+  }
+  .row .key { color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .row .val { color: var(--text); font-variant-numeric: tabular-nums; }
+  .row .val.green { color: var(--green); }
+  .row .val.red { color: var(--red); }
+  .row .val.amber { color: var(--amber); }
+  table.data { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px; }
+  table.data th {
+    text-align: left;
+    color: var(--muted);
+    text-transform: uppercase;
+    font-weight: normal;
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--border);
+    letter-spacing: 0.5px;
+  }
+  table.data td {
+    padding: 4px 6px;
+    border-bottom: 1px dotted var(--dim);
+    font-variant-numeric: tabular-nums;
+  }
+  table.data tr:hover { background: #1a1a1a; }
+  .sparkline { width: 100%; height: 60px; margin-top: 12px; }
+  .section-label {
+    color: var(--cyan);
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin: 10px 0 6px;
+  }
+  .flow-bar {
+    display: flex;
+    height: 28px;
+    margin: 12px 0 18px;
+    border: 1px solid var(--border);
+  }
+  .flow-seg {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #000;
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+  }
+  .pulse { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 1.5s infinite; margin-right: 6px; vertical-align: middle; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .commitment-bar { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .commitment-bar .label { width: 90px; color: var(--muted); font-size: 10px; text-transform: uppercase; }
+  .commitment-bar .fill { flex: 1; height: 8px; background: var(--grid); position: relative; }
+  .commitment-bar .fill-inner { height: 100%; background: var(--amber); }
+  .commitment-bar .amt { width: 80px; text-align: right; font-variant-numeric: tabular-nums; }
+  .footer-status {
+    background: #000;
+    border-top: 1px solid var(--border);
+    padding: 4px 14px;
+    font-size: 10px;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">◉ GOD'S EYE / TERMINAL</div>
+  <div class="nav">
+    <span class="active">MONEY MAP</span>
+    <span>GURU</span>
+    <span>GOALS</span>
+    <span>SETTINGS</span>
+  </div>
+  <div style="color: var(--muted)">USER: SHANE · BASE: USD · 2026-05-25 14:32:08 SGT</div>
+</div>
+
+<div class="ticker-strip">
+  <div class="item"><span class="sym">SPX</span><span class="up">5,847.32 ▲ 0.42%</span></div>
+  <div class="item"><span class="sym">NDX</span><span class="up">20,512.88 ▲ 0.78%</span></div>
+  <div class="item"><span class="sym">BTC</span><span class="down">98,450 ▼ 1.24%</span></div>
+  <div class="item"><span class="sym">ETH</span><span class="up">3,820 ▲ 0.31%</span></div>
+  <div class="item"><span class="sym">USD/SGD</span><span class="down">1.3421 ▼ 0.08%</span></div>
+  <div class="item"><span class="sym">VIX</span><span class="up">14.82 ▲ 2.10%</span></div>
+</div>
+
+<div class="container">
+
+  <div class="panel">
+    <div class="panel-header">
+      <span>◢ NET WORTH</span>
+      <span class="meta">RT · CACHED 2m ago</span>
+    </div>
+    <div class="panel-body">
+      <div class="big-num"><span class="currency">USD</span>284,512</div>
+      <div class="delta-up">▲ $11,420 (+4.18%) MoM &nbsp;|&nbsp; ▲ $48,300 (+20.4%) YTD</div>
+      <svg class="sparkline" viewBox="0 0 400 60" preserveAspectRatio="none">
+        <polyline fill="none" stroke="#00ff7f" stroke-width="1.5"
+          points="0,45 30,42 60,38 90,40 120,35 150,32 180,28 210,30 240,25 270,22 300,18 330,15 360,12 400,8"/>
+        <polyline fill="rgba(0,255,127,0.08)" stroke="none"
+          points="0,45 30,42 60,38 90,40 120,35 150,32 180,28 210,30 240,25 270,22 300,18 330,15 360,12 400,8 400,60 0,60"/>
+      </svg>
+      <div class="section-label">▸ BREAKDOWN</div>
+      <div class="row"><span class="key">Cash & Equiv</span><span class="val">$ 42,300</span></div>
+      <div class="row"><span class="key">Equities</span><span class="val green">$ 138,500</span></div>
+      <div class="row"><span class="key">Crypto</span><span class="val amber">$ 38,200</span></div>
+      <div class="row"><span class="key">ETF / Unit Trust</span><span class="val green">$ 71,800</span></div>
+      <div class="row"><span class="key">Liabilities</span><span class="val red">-$ 6,288</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <span>◢ CASH FLOW · MAY 2026</span>
+      <span class="meta">FORECAST · ACTUAL</span>
+    </div>
+    <div class="panel-body">
+      <div class="row"><span class="key">Monthly Inflow</span><span class="val green">+ $ 9,840</span></div>
+      <div class="row"><span class="key">Monthly Outflow</span><span class="val red">- $ 5,108</span></div>
+      <div class="row"><span class="key">Net Free Cash</span><span class="val amber">$ 4,732 (48.1%)</span></div>
+
+      <div class="flow-bar">
+        <div class="flow-seg" style="width:25%;background:#ff3b3b">FIXED 25%</div>
+        <div class="flow-seg" style="width:8%;background:#ff8c00">SUB 8%</div>
+        <div class="flow-seg" style="width:20%;background:#00e5ff">INVEST 20%</div>
+        <div class="flow-seg" style="width:47%;background:#00ff7f">FREE 47%</div>
+      </div>
+
+      <div class="section-label">▸ SANKEY (collapsed view)</div>
+      <table class="data">
+        <thead><tr><th>FROM</th><th>TO</th><th style="text-align:right">FLOW</th></tr></thead>
+        <tbody>
+          <tr><td>SALARY</td><td>FIXED EXP</td><td style="text-align:right">$ 2,400</td></tr>
+          <tr><td>SALARY</td><td>SUBS</td><td style="text-align:right">$ 380</td></tr>
+          <tr><td>SALARY</td><td>DCA INVEST</td><td style="text-align:right">$ 2,000</td></tr>
+          <tr><td>SALARY</td><td>FREE CASH</td><td style="text-align:right" class="amber">$ 3,720</td></tr>
+          <tr><td>DIVIDENDS</td><td>FREE CASH</td><td style="text-align:right" class="amber">$ 340</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <span>◢ COMMITMENTS</span>
+      <span class="meta">RECURRING · MONTHLY</span>
+    </div>
+    <div class="panel-body">
+      <div class="commitment-bar">
+        <span class="label">Subscriptions</span>
+        <div class="fill"><div class="fill-inner" style="width:18%"></div></div>
+        <span class="amt amber">$ 380</span>
+      </div>
+      <div class="commitment-bar">
+        <span class="label">Fixed Exp</span>
+        <div class="fill"><div class="fill-inner" style="width:62%;background:var(--red)"></div></div>
+        <span class="amt red">$ 2,400</span>
+      </div>
+      <div class="commitment-bar">
+        <span class="label">DCA Invest</span>
+        <div class="fill"><div class="fill-inner" style="width:50%;background:var(--cyan)"></div></div>
+        <span class="amt" style="color:var(--cyan)">$ 2,000</span>
+      </div>
+      <div class="commitment-bar">
+        <span class="label">Loan Pmt</span>
+        <div class="fill"><div class="fill-inner" style="width:8%;background:var(--muted)"></div></div>
+        <span class="amt">$ 328</span>
+      </div>
+
+      <div class="section-label">▸ TOP SUBSCRIPTIONS (12 active)</div>
+      <table class="data">
+        <thead><tr><th>SERVICE</th><th>CYCLE</th><th style="text-align:right">AMT</th><th style="text-align:right">NEXT</th></tr></thead>
+        <tbody>
+          <tr><td>AWS</td><td>MO</td><td style="text-align:right">$ 92.40</td><td style="text-align:right">3d</td></tr>
+          <tr><td>Anthropic Claude</td><td>MO</td><td style="text-align:right">$ 20.00</td><td style="text-align:right">7d</td></tr>
+          <tr><td>Cursor Pro</td><td>MO</td><td style="text-align:right">$ 20.00</td><td style="text-align:right">12d</td></tr>
+          <tr><td>TradingView</td><td>YR</td><td style="text-align:right">$ 14.95</td><td style="text-align:right">84d</td></tr>
+          <tr><td>iCloud 2TB</td><td>MO</td><td style="text-align:right">$ 9.99</td><td style="text-align:right">19d</td></tr>
+          <tr><td>Spotify Family</td><td>MO</td><td style="text-align:right">$ 16.99</td><td style="text-align:right">22d</td></tr>
+          <tr><td>+ 6 more...</td><td></td><td style="text-align:right" class="muted">$ 205.67</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <span>◢ INCOME PULSE</span>
+      <span class="meta"><span class="pulse"></span>LIVE</span>
+    </div>
+    <div class="panel-body">
+      <div class="big-num"><span class="currency">YTD</span>49,200</div>
+      <div class="delta-up">▲ on track for $118K (target $115K)</div>
+
+      <div class="section-label">▸ NEXT INFLOWS</div>
+      <table class="data">
+        <thead><tr><th>SOURCE</th><th>TYPE</th><th style="text-align:right">AMT</th><th style="text-align:right">ETA</th></tr></thead>
+        <tbody>
+          <tr><td>ACME CORP</td><td>SALARY</td><td style="text-align:right" class="green">$ 8,500</td><td style="text-align:right">5d</td></tr>
+          <tr><td>VOO</td><td>DIV</td><td style="text-align:right" class="green">$ 142</td><td style="text-align:right">11d</td></tr>
+          <tr><td>SCHD</td><td>DIV</td><td style="text-align:right" class="green">$ 198</td><td style="text-align:right">18d</td></tr>
+          <tr><td>Side Project X</td><td>OTHER</td><td style="text-align:right" class="amber">$ 1,000</td><td style="text-align:right">~30d</td></tr>
+        </tbody>
+      </table>
+
+      <div class="section-label">▸ SOURCE MIX (YTD)</div>
+      <div class="row"><span class="key">Salary</span><span class="val">$ 42,500 · 86%</span></div>
+      <div class="row"><span class="key">Dividends</span><span class="val green">$ 4,200 · 8.5%</span></div>
+      <div class="row"><span class="key">Side Income</span><span class="val amber">$ 2,500 · 5%</span></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer-status">
+  <div>STATUS: <span style="color:var(--green)">● CONNECTED</span> &nbsp; · &nbsp; FX FEED: exchangerate.host · 12s ago &nbsp; · &nbsp; MKT FEED: Finnhub · 2m cache</div>
+  <div>F1 HELP &nbsp; F2 GURU &nbsp; F3 GOALS &nbsp; ESC LOGOUT</div>
+</div>
+
+</body>
+</html>

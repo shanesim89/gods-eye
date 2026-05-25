@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>God's Eye — Glassmorphism Cockpit</title>
+<style>
+  :root {
+    --bg-1: #0b0b1e;
+    --bg-2: #1a0b2e;
+    --bg-3: #0a1929;
+    --glass: rgba(255, 255, 255, 0.04);
+    --glass-strong: rgba(255, 255, 255, 0.08);
+    --border: rgba(255, 255, 255, 0.1);
+    --border-strong: rgba(255, 255, 255, 0.18);
+    --text: #f0f4ff;
+    --muted: rgba(240, 244, 255, 0.55);
+    --dim: rgba(240, 244, 255, 0.3);
+    --neon-cyan: #00f0ff;
+    --neon-purple: #b066ff;
+    --neon-pink: #ff4ecd;
+    --neon-green: #5cffb1;
+    --neon-amber: #ffce5c;
+    --neon-red: #ff5c7a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    color: var(--text);
+    font-family: 'Inter', 'SF Pro Display', -apple-system, system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+    background:
+      radial-gradient(ellipse 80% 60% at 20% 0%, rgba(176, 102, 255, 0.35), transparent 60%),
+      radial-gradient(ellipse 70% 50% at 80% 100%, rgba(0, 240, 255, 0.25), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 50% 50%, rgba(255, 78, 205, 0.15), transparent 60%),
+      linear-gradient(135deg, var(--bg-1), var(--bg-2) 50%, var(--bg-3));
+    background-attachment: fixed;
+    overflow-x: hidden;
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      radial-gradient(rgba(255,255,255,0.04) 1px, transparent 1px);
+    background-size: 32px 32px;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .topbar {
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    background: rgba(11, 11, 30, 0.6);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .brand {
+    font-weight: 700; font-size: 16px;
+    background: linear-gradient(135deg, var(--neon-cyan), var(--neon-purple));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    letter-spacing: 1px;
+  }
+  .brand .dot {
+    display: inline-block; width: 10px; height: 10px;
+    border-radius: 50%; background: var(--neon-cyan);
+    box-shadow: 0 0 12px var(--neon-cyan);
+    margin-right: 10px; vertical-align: middle;
+    animation: float 3s ease-in-out infinite;
+  }
+  @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+  .nav { display: flex; gap: 8px; }
+  .nav a {
+    padding: 8px 16px;
+    border-radius: 999px;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.2s;
+  }
+  .nav a:hover { color: var(--text); background: var(--glass); }
+  .nav a.active {
+    color: var(--text);
+    background: var(--glass-strong);
+    border: 1px solid var(--border-strong);
+    box-shadow: 0 0 24px rgba(0, 240, 255, 0.15);
+  }
+  .user-chip {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 14px 6px 6px;
+    border-radius: 999px;
+    background: var(--glass);
+    border: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .avatar {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--neon-purple), var(--neon-pink));
+  }
+  .container {
+    position: relative; z-index: 1;
+    padding: 28px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  .panel {
+    position: relative;
+    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    background: linear-gradient(145deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    padding: 24px;
+    overflow: hidden;
+    transition: transform 0.3s, border-color 0.3s;
+  }
+  .panel::before {
+    content: '';
+    position: absolute; inset: 0;
+    border-radius: 24px;
+    padding: 1px;
+    background: linear-gradient(135deg, rgba(0,240,255,0.4), transparent 40%, rgba(176,102,255,0.4));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    pointer-events: none;
+  }
+  .panel:hover { transform: translateY(-2px); border-color: var(--border-strong); }
+  .panel-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 18px;
+  }
+  .panel-title {
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .panel-meta {
+    font-size: 10px;
+    color: var(--dim);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .live-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--neon-green);
+    box-shadow: 0 0 8px var(--neon-green);
+    animation: pulse 1.8s infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.3); } }
+  .big-num {
+    font-size: 44px;
+    font-weight: 700;
+    letter-spacing: -1px;
+    font-variant-numeric: tabular-nums;
+    background: linear-gradient(135deg, #fff, rgba(255,255,255,0.7));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .currency-prefix {
+    font-size: 16px;
+    color: var(--muted);
+    font-weight: 400;
+    margin-right: 8px;
+    -webkit-text-fill-color: var(--muted);
+  }
+  .delta {
+    display: inline-flex; align-items: center; gap: 8px;
+    margin-top: 8px;
+    font-size: 12px;
+  }
+  .delta.up { color: var(--neon-green); }
+  .delta.down { color: var(--neon-red); }
+  .delta-pill {
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: rgba(92, 255, 177, 0.12);
+    border: 1px solid rgba(92, 255, 177, 0.25);
+    font-weight: 600;
+  }
+  .breakdown { margin-top: 22px; display: flex; flex-direction: column; gap: 10px; }
+  .row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 14px;
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font-size: 12px;
+    transition: background 0.2s;
+  }
+  .row:hover { background: var(--glass-strong); }
+  .row .key { color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .row .dot-sm { width: 8px; height: 8px; border-radius: 50%; }
+  .row .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .val.green { color: var(--neon-green); }
+  .val.red { color: var(--neon-red); }
+  .val.amber { color: var(--neon-amber); }
+  .val.cyan { color: var(--neon-cyan); }
+  .val.purple { color: var(--neon-purple); }
+  .sparkline { width: 100%; height: 70px; margin-top: 14px; }
+  .flow-bar {
+    display: flex;
+    height: 10px;
+    border-radius: 999px;
+    overflow: hidden;
+    margin: 18px 0 12px;
+    background: var(--glass);
+    border: 1px solid var(--border);
+  }
+  .flow-bar div { transition: width 0.4s; }
+  .flow-legend { display: flex; flex-wrap: wrap; gap: 12px 18px; font-size: 11px; color: var(--muted); margin-bottom: 18px; }
+  .flow-legend .item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .commitment {
+    margin: 12px 0;
+  }
+  .commitment-top {
+    display: flex; justify-content: space-between; margin-bottom: 6px;
+    font-size: 12px;
+  }
+  .commitment-top .name { color: var(--muted); text-transform: uppercase; letter-spacing: 1px; font-size: 10px; }
+  .commitment-bar-bg {
+    height: 6px; border-radius: 999px;
+    background: var(--glass);
+    overflow: hidden;
+  }
+  .commitment-bar-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--neon-cyan), var(--neon-purple));
+    box-shadow: 0 0 12px rgba(0,240,255,0.4);
+  }
+  .sub-list {
+    margin-top: 16px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .sub-item {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 12px; align-items: center;
+    padding: 10px 14px;
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 12px;
+  }
+  .sub-item .name { display: flex; align-items: center; gap: 10px; }
+  .sub-icon {
+    width: 28px; height: 28px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700;
+    background: linear-gradient(135deg, rgba(0,240,255,0.2), rgba(176,102,255,0.2));
+    border: 1px solid var(--border-strong);
+  }
+  .sub-item .amt { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .sub-item .next { color: var(--muted); font-size: 11px; }
+  .section-label {
+    color: var(--muted);
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin: 22px 0 10px;
+    font-weight: 600;
+  }
+  .pulse-card {
+    margin-top: 12px;
+    padding: 16px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, rgba(92,255,177,0.08), rgba(0,240,255,0.04));
+    border: 1px solid rgba(92,255,177,0.2);
+  }
+  .pulse-card .label { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+  .pulse-card .src { font-weight: 600; font-size: 14px; margin-bottom: 8px; }
+  .pulse-card .amt { font-size: 22px; font-weight: 700; color: var(--neon-green); font-variant-numeric: tabular-nums; }
+  .pulse-card .eta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .ticker-strip {
+    backdrop-filter: blur(20px);
+    background: rgba(255,255,255,0.03);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 28px;
+    display: flex; gap: 28px;
+    font-size: 12px;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .ticker-strip .item { display: inline-flex; gap: 8px; align-items: center; }
+  .ticker-strip .sym { color: var(--muted); font-weight: 600; }
+  .ticker-strip .val { font-variant-numeric: tabular-nums; }
+  .ticker-strip .up { color: var(--neon-green); }
+  .ticker-strip .down { color: var(--neon-red); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><span class="dot"></span>GOD'S EYE</div>
+  <div class="nav">
+    <a class="active" href="#">Money Map</a>
+    <a href="#">Guru</a>
+    <a href="#">Goals</a>
+    <a href="#">Settings</a>
+  </div>
+  <div class="user-chip">
+    <div class="avatar"></div>
+    <span>Shane · USD</span>
+  </div>
+</div>
+
+<div class="ticker-strip">
+  <div class="item"><span class="sym">SPX</span><span class="val up">5,847.32 ▲ 0.42%</span></div>
+  <div class="item"><span class="sym">NDX</span><span class="val up">20,512.88 ▲ 0.78%</span></div>
+  <div class="item"><span class="sym">BTC</span><span class="val down">98,450 ▼ 1.24%</span></div>
+  <div class="item"><span class="sym">ETH</span><span class="val up">3,820 ▲ 0.31%</span></div>
+  <div class="item"><span class="sym">USD/SGD</span><span class="val down">1.3421 ▼ 0.08%</span></div>
+  <div class="item"><span class="sym">VIX</span><span class="val up">14.82 ▲ 2.10%</span></div>
+</div>
+
+<div class="container">
+
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Net Worth</div>
+      <div class="panel-meta">cached 2m ago</div>
+    </div>
+    <div class="big-num"><span class="currency-prefix">USD</span>284,512</div>
+    <div class="delta up">
+      <span class="delta-pill">▲ 4.18% MoM</span>
+      <span style="color:var(--muted)">+ $11,420 this month · + $48,300 YTD</span>
+    </div>
+    <svg class="sparkline" viewBox="0 0 400 70" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="g1" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="#5cffb1" stop-opacity="0.5"/>
+          <stop offset="100%" stop-color="#5cffb1" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <polyline fill="url(#g1)" stroke="none"
+        points="0,55 30,50 60,45 90,48 120,40 150,35 180,30 210,33 240,25 270,22 300,16 330,12 360,10 400,6 400,70 0,70"/>
+      <polyline fill="none" stroke="#5cffb1" stroke-width="2"
+        points="0,55 30,50 60,45 90,48 120,40 150,35 180,30 210,33 240,25 270,22 300,16 330,12 360,10 400,6"/>
+    </svg>
+    <div class="section-label">Breakdown</div>
+    <div class="breakdown">
+      <div class="row"><span class="key"><span class="dot-sm" style="background:var(--neon-cyan)"></span>Cash & Equiv</span><span class="val">$ 42,300</span></div>
+      <div class="row"><span class="key"><span class="dot-sm" style="background:var(--neon-green)"></span>Equities</span><span class="val green">$ 138,500</span></div>
+      <div class="row"><span class="key"><span class="dot-sm" style="background:var(--neon-amber)"></span>Crypto</span><span class="val amber">$ 38,200</span></div>
+      <div class="row"><span class="key"><span class="dot-sm" style="background:var(--neon-purple)"></span>ETF / Unit Trust</span><span class="val purple">$ 71,800</span></div>
+      <div class="row"><span class="key"><span class="dot-sm" style="background:var(--neon-red)"></span>Liabilities</span><span class="val red">- $ 6,288</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Cash Flow · May 2026</div>
+      <div class="panel-meta">forecast</div>
+    </div>
+    <div class="big-num"><span class="currency-prefix">NET</span>+ 4,732</div>
+    <div class="delta up">
+      <span class="delta-pill">48.1% saved</span>
+      <span style="color:var(--muted)">in $ 9,840 · out $ 5,108</span>
+    </div>
+
+    <div class="flow-bar">
+      <div style="width:25%;background:var(--neon-red)"></div>
+      <div style="width:8%;background:var(--neon-amber)"></div>
+      <div style="width:20%;background:var(--neon-cyan)"></div>
+      <div style="width:47%;background:var(--neon-green)"></div>
+    </div>
+    <div class="flow-legend">
+      <div class="item"><span class="legend-dot" style="background:var(--neon-red)"></span>Fixed 25%</div>
+      <div class="item"><span class="legend-dot" style="background:var(--neon-amber)"></span>Subs 8%</div>
+      <div class="item"><span class="legend-dot" style="background:var(--neon-cyan)"></span>Invest 20%</div>
+      <div class="item"><span class="legend-dot" style="background:var(--neon-green)"></span>Free 47%</div>
+    </div>
+
+    <div class="section-label">Flow Summary</div>
+    <div class="breakdown">
+      <div class="row"><span class="key">Salary → Fixed</span><span class="val red">- $ 2,400</span></div>
+      <div class="row"><span class="key">Salary → Subscriptions</span><span class="val amber">- $ 380</span></div>
+      <div class="row"><span class="key">Salary → DCA Invest</span><span class="val cyan">- $ 2,000</span></div>
+      <div class="row"><span class="key">Salary → Free Cash</span><span class="val green">+ $ 3,720</span></div>
+      <div class="row"><span class="key">Dividends → Free Cash</span><span class="val green">+ $ 340</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Commitments</div>
+      <div class="panel-meta">monthly recurring</div>
+    </div>
+    <div class="big-num"><span class="currency-prefix">USD</span>5,108<span style="font-size:18px;color:var(--muted)">/mo</span></div>
+
+    <div class="commitment" style="margin-top:22px">
+      <div class="commitment-top"><span class="name">Subscriptions · 12 active</span><span class="val amber">$ 380</span></div>
+      <div class="commitment-bar-bg"><div class="commitment-bar-fill" style="width:18%;background:linear-gradient(90deg,var(--neon-amber),var(--neon-pink))"></div></div>
+    </div>
+    <div class="commitment">
+      <div class="commitment-top"><span class="name">Fixed Expenses</span><span class="val red">$ 2,400</span></div>
+      <div class="commitment-bar-bg"><div class="commitment-bar-fill" style="width:62%;background:linear-gradient(90deg,var(--neon-red),var(--neon-pink))"></div></div>
+    </div>
+    <div class="commitment">
+      <div class="commitment-top"><span class="name">DCA Investments</span><span class="val cyan">$ 2,000</span></div>
+      <div class="commitment-bar-bg"><div class="commitment-bar-fill" style="width:50%"></div></div>
+    </div>
+    <div class="commitment">
+      <div class="commitment-top"><span class="name">Loan Payments</span><span class="val">$ 328</span></div>
+      <div class="commitment-bar-bg"><div class="commitment-bar-fill" style="width:8%;background:linear-gradient(90deg,var(--muted),var(--neon-purple))"></div></div>
+    </div>
+
+    <div class="section-label">Top Subscriptions</div>
+    <div class="sub-list">
+      <div class="sub-item">
+        <div class="name"><div class="sub-icon">AW</div>AWS</div>
+        <div class="amt">$ 92.40</div>
+        <div class="next">3d</div>
+      </div>
+      <div class="sub-item">
+        <div class="name"><div class="sub-icon">AN</div>Anthropic Claude</div>
+        <div class="amt">$ 20.00</div>
+        <div class="next">7d</div>
+      </div>
+      <div class="sub-item">
+        <div class="name"><div class="sub-icon">CR</div>Cursor Pro</div>
+        <div class="amt">$ 20.00</div>
+        <div class="next">12d</div>
+      </div>
+      <div class="sub-item">
+        <div class="name"><div class="sub-icon">SP</div>Spotify Family</div>
+        <div class="amt">$ 16.99</div>
+        <div class="next">22d</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">Income Pulse</div>
+      <div class="panel-meta"><span class="live-dot"></span>live</div>
+    </div>
+    <div class="big-num"><span class="currency-prefix">YTD</span>49,200</div>
+    <div class="delta up">
+      <span class="delta-pill">on track</span>
+      <span style="color:var(--muted)">target $115K · projected $118K</span>
+    </div>
+
+    <div class="pulse-card">
+      <div class="label">Next inflow · 5 days</div>
+      <div class="src">ACME CORP · Salary</div>
+      <div class="amt">+ $ 8,500</div>
+      <div class="eta">arrives 2026-05-30</div>
+    </div>
+
+    <div class="section-label">Upcoming</div>
+    <div class="breakdown">
+      <div class="row"><span class="key">VOO · Dividend</span><span class="val green">+ $ 142 · 11d</span></div>
+      <div class="row"><span class="key">SCHD · Dividend</span><span class="val green">+ $ 198 · 18d</span></div>
+      <div class="row"><span class="key">Side Project X</span><span class="val amber">+ $ 1,000 · ~30d</span></div>
+    </div>
+
+    <div class="section-label">Source Mix · YTD</div>
+    <div class="breakdown">
+      <div class="row"><span class="key"><span class="dot-sm" style="background:var(--neon-cyan)"></span>Salary</span><span class="val">$ 42,500 · 86%</span></div>
+      <div class="row"><span class="key"><span class="dot-sm" style="background:var(--neon-green)"></span>Dividends</span><span class="val green">$ 4,200 · 8.5%</span></div>
+      <div class="row"><span class="key"><span class="dot-sm" style="background:var(--neon-amber)"></span>Side</span><span class="val amber">$ 2,500 · 5%</span></div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>
