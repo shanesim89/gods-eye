@@ -6,7 +6,7 @@ import { eq, asc } from "drizzle-orm";
 import { convert } from "@/lib/fx";
 import { fmtMoney, toMonthly } from "@/lib/format";
 import { AddForm } from "./AddForm";
-import { DeleteBtn } from "./DeleteBtn";
+import { IncRow } from "./Row";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +22,10 @@ export default async function Page() {
   const enriched = await Promise.all(
     rows.map(async (r) => {
       const monthly = await convert(toMonthly(Number(r.amount), r.cycle), r.currency, base);
-      return { ...r, monthly };
+      return {
+        id: r.id, name: r.name, amount: r.amount, currency: r.currency,
+        cycle: r.cycle, type: r.type, monthly,
+      };
     })
   );
   const totalMonthly = enriched.reduce((s, r) => s + r.monthly, 0);
@@ -37,7 +40,6 @@ export default async function Page() {
       meta={`${rows.length} SOURCES · ${fmtMoney(totalMonthly, base, 0)}/MO`}
     >
       <AddForm />
-
       {Object.keys(byType).length > 0 && (
         <div className="flex flex-wrap gap-3 mb-3 text-[10px]">
           {Object.entries(byType).map(([t, v]) => (
@@ -47,7 +49,6 @@ export default async function Page() {
           ))}
         </div>
       )}
-
       <table className="w-full text-[11px] border-collapse">
         <thead>
           <tr className="text-muted uppercase tracking-[0.5px]">
@@ -56,23 +57,14 @@ export default async function Page() {
             <th className="text-right py-1 border-b border-border font-normal pl-3">AMOUNT</th>
             <th className="text-left py-1 border-b border-border font-normal pl-3">CYCLE</th>
             <th className="text-right py-1 border-b border-border font-normal pl-3">MONTHLY ({base})</th>
-            <th className="w-8"></th>
+            <th className="text-right py-1 border-b border-border font-normal pl-3 w-20">ACTIONS</th>
           </tr>
         </thead>
         <tbody>
           {enriched.length === 0 && (
             <tr><td colSpan={6} className="text-muted text-center py-4 italic">no income sources yet</td></tr>
           )}
-          {enriched.map((r) => (
-            <tr key={r.id} className="dotted-row">
-              <td className="py-1 text-text">{r.name}</td>
-              <td className="py-1 pl-3 text-muted uppercase">{r.type}</td>
-              <td className="py-1 pl-3 text-right">{fmtMoney(Number(r.amount), r.currency, 2)}</td>
-              <td className="py-1 pl-3 text-muted uppercase">{r.cycle}</td>
-              <td className="py-1 pl-3 text-right text-green">{fmtMoney(r.monthly, base, 2)}</td>
-              <td className="py-1 pl-3 text-right"><DeleteBtn id={r.id} /></td>
-            </tr>
-          ))}
+          {enriched.map((r) => <IncRow key={r.id} r={r} base={base} />)}
         </tbody>
       </table>
     </Panel>

@@ -13,7 +13,7 @@ export async function createIncome(formData: FormData) {
   const user = await requireUser();
   const name = String(formData.get("name") ?? "").trim();
   const amount = Number(formData.get("amount"));
-  const currency = String(formData.get("currency") ?? "USD");
+  const currency = String(formData.get("currency") ?? "SGD");
   const cycle = String(formData.get("cycle") ?? "monthly");
   const type = String(formData.get("type") ?? "salary");
 
@@ -31,6 +31,47 @@ export async function createIncome(formData: FormData) {
     cycle,
     type,
   });
+  revalidatePath("/money-map/income");
+  revalidatePath("/money-map");
+  return { ok: true };
+}
+
+export async function updateIncome(id: string, formData: FormData) {
+  const user = await requireUser();
+  const patch: Record<string, unknown> = { updated_at: new Date() };
+
+  const name = formData.get("name");
+  if (name !== null) {
+    const s = String(name).trim();
+    if (!s) return { error: "name required" };
+    patch.name = s;
+  }
+  const amount = formData.get("amount");
+  if (amount !== null) {
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n <= 0) return { error: "amount must be > 0" };
+    patch.amount = String(n);
+  }
+  const currency = formData.get("currency");
+  if (currency !== null) {
+    const s = String(currency);
+    if (!CURRENCIES.includes(s)) return { error: "invalid currency" };
+    patch.currency = s;
+  }
+  const cycle = formData.get("cycle");
+  if (cycle !== null) {
+    const s = String(cycle);
+    if (!CYCLES.includes(s)) return { error: "invalid cycle" };
+    patch.cycle = s;
+  }
+  const type = formData.get("type");
+  if (type !== null) {
+    const s = String(type);
+    if (!TYPES.includes(s)) return { error: "invalid type" };
+    patch.type = s;
+  }
+
+  await db.update(income_sources).set(patch).where(and(eq(income_sources.id, id), eq(income_sources.user_id, user.id)));
   revalidatePath("/money-map/income");
   revalidatePath("/money-map");
   return { ok: true };

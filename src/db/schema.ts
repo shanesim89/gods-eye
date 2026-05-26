@@ -36,6 +36,8 @@ export const assets = pgTable("assets", {
   cost_basis: numeric("cost_basis", { precision: 18, scale: 2 }),
   currency: text("currency").notNull(),
   asset_class: text("asset_class").notNull(),
+  current_value: numeric("current_value", { precision: 18, scale: 2 }),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const liabilities = pgTable("liabilities", {
@@ -44,7 +46,10 @@ export const liabilities = pgTable("liabilities", {
   name: text("name").notNull(),
   balance: numeric("balance", { precision: 18, scale: 2 }).notNull(),
   interest_rate: numeric("interest_rate", { precision: 6, scale: 4 }),
+  monthly_payment: numeric("monthly_payment", { precision: 18, scale: 2 }),
   currency: text("currency").notNull(),
+  linked_asset_id: uuid("linked_asset_id"),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const subscriptions = pgTable("subscriptions", {
@@ -55,6 +60,7 @@ export const subscriptions = pgTable("subscriptions", {
   currency: text("currency").notNull(),
   cycle: text("cycle").notNull(),
   next_charge: timestamp("next_charge"),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const fixed_expenses = pgTable("fixed_expenses", {
@@ -64,6 +70,7 @@ export const fixed_expenses = pgTable("fixed_expenses", {
   amount: numeric("amount", { precision: 18, scale: 2 }).notNull(),
   currency: text("currency").notNull(),
   cycle: text("cycle").notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const income_sources = pgTable("income_sources", {
@@ -74,6 +81,7 @@ export const income_sources = pgTable("income_sources", {
   currency: text("currency").notNull(),
   cycle: text("cycle").notNull(),
   type: text("type").notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const investment_commitments = pgTable("investment_commitments", {
@@ -83,6 +91,7 @@ export const investment_commitments = pgTable("investment_commitments", {
   target_amount: numeric("target_amount", { precision: 18, scale: 2 }).notNull(),
   currency: text("currency").notNull(),
   cycle: text("cycle").notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const transactions = pgTable("transactions", {

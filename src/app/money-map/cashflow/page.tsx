@@ -6,7 +6,7 @@ import { eq, asc } from "drizzle-orm";
 import { convert } from "@/lib/fx";
 import { fmtMoney, toMonthly } from "@/lib/format";
 import { FixedExpenseForm, CommitmentForm } from "./Forms";
-import { DelFx, DelIc } from "./DeleteBtns";
+import { FxRow, IcRow } from "./Rows";
 
 export const dynamic = "force-dynamic";
 
@@ -20,20 +20,16 @@ export default async function Page() {
   ]);
 
   const fxEnriched = await Promise.all(
-    fxRows.map(async (r) => {
-      const monthly = await convert(toMonthly(Number(r.amount), r.cycle), r.currency, base);
-      return { ...r, monthly };
-    })
+    fxRows.map(async (r) => ({
+      id: r.id, name: r.name, amount: r.amount, currency: r.currency, cycle: r.cycle,
+      monthly: await convert(toMonthly(Number(r.amount), r.cycle), r.currency, base),
+    }))
   );
   const icEnriched = await Promise.all(
-    icRows.map(async (r) => {
-      const monthly = await convert(
-        toMonthly(Number(r.target_amount), r.cycle),
-        r.currency,
-        base
-      );
-      return { ...r, monthly };
-    })
+    icRows.map(async (r) => ({
+      id: r.id, name: r.name, target_amount: r.target_amount, currency: r.currency, cycle: r.cycle,
+      monthly: await convert(toMonthly(Number(r.target_amount), r.cycle), r.currency, base),
+    }))
   );
 
   const fxTotal = fxEnriched.reduce((s, r) => s + r.monthly, 0);
@@ -41,10 +37,7 @@ export default async function Page() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-      <Panel
-        title="FIXED EXPENSES"
-        meta={`${fxRows.length} ITEMS · ${fmtMoney(fxTotal, base, 0)}/MO`}
-      >
+      <Panel title="FIXED EXPENSES" meta={`${fxRows.length} ITEMS · ${fmtMoney(fxTotal, base, 0)}/MO`}>
         <FixedExpenseForm />
         <table className="w-full text-[11px] border-collapse">
           <thead>
@@ -53,30 +46,19 @@ export default async function Page() {
               <th className="text-right py-1 border-b border-border font-normal">AMOUNT</th>
               <th className="text-left py-1 border-b border-border font-normal pl-3">CYCLE</th>
               <th className="text-right py-1 border-b border-border font-normal pl-3">MONTHLY ({base})</th>
-              <th className="w-8"></th>
+              <th className="text-right py-1 border-b border-border font-normal pl-3 w-20">ACTIONS</th>
             </tr>
           </thead>
           <tbody>
             {fxEnriched.length === 0 && (
               <tr><td colSpan={5} className="text-muted text-center py-4 italic">no fixed expenses yet</td></tr>
             )}
-            {fxEnriched.map((r) => (
-              <tr key={r.id} className="dotted-row">
-                <td className="py-1 text-text">{r.name}</td>
-                <td className="py-1 text-right">{fmtMoney(Number(r.amount), r.currency, 2)}</td>
-                <td className="py-1 pl-3 text-muted uppercase">{r.cycle}</td>
-                <td className="py-1 pl-3 text-right text-amber">{fmtMoney(r.monthly, base, 2)}</td>
-                <td className="py-1 pl-3 text-right"><DelFx id={r.id} /></td>
-              </tr>
-            ))}
+            {fxEnriched.map((r) => <FxRow key={r.id} r={r} base={base} />)}
           </tbody>
         </table>
       </Panel>
 
-      <Panel
-        title="INVESTMENT COMMITMENTS (DCA)"
-        meta={`${icRows.length} ITEMS · ${fmtMoney(icTotal, base, 0)}/MO`}
-      >
+      <Panel title="INVESTMENT COMMITMENTS (DCA)" meta={`${icRows.length} ITEMS · ${fmtMoney(icTotal, base, 0)}/MO`}>
         <CommitmentForm />
         <table className="w-full text-[11px] border-collapse">
           <thead>
@@ -85,22 +67,14 @@ export default async function Page() {
               <th className="text-right py-1 border-b border-border font-normal">TARGET</th>
               <th className="text-left py-1 border-b border-border font-normal pl-3">CYCLE</th>
               <th className="text-right py-1 border-b border-border font-normal pl-3">MONTHLY ({base})</th>
-              <th className="w-8"></th>
+              <th className="text-right py-1 border-b border-border font-normal pl-3 w-20">ACTIONS</th>
             </tr>
           </thead>
           <tbody>
             {icEnriched.length === 0 && (
               <tr><td colSpan={5} className="text-muted text-center py-4 italic">no commitments yet</td></tr>
             )}
-            {icEnriched.map((r) => (
-              <tr key={r.id} className="dotted-row">
-                <td className="py-1 text-text">{r.name}</td>
-                <td className="py-1 text-right">{fmtMoney(Number(r.target_amount), r.currency, 2)}</td>
-                <td className="py-1 pl-3 text-muted uppercase">{r.cycle}</td>
-                <td className="py-1 pl-3 text-right text-cyan">{fmtMoney(r.monthly, base, 2)}</td>
-                <td className="py-1 pl-3 text-right"><DelIc id={r.id} /></td>
-              </tr>
-            ))}
+            {icEnriched.map((r) => <IcRow key={r.id} r={r} base={base} />)}
           </tbody>
         </table>
       </Panel>
