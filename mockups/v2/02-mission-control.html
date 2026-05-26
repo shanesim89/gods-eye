@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>God's Eye v2 — Mission Control</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --panel: #121212;
+    --border: #1f1f1f;
+    --grid: #161616;
+    --amber: #ffb000;
+    --green: #00ff7f;
+    --red: #ff3b3b;
+    --cyan: #00e5ff;
+    --purple: #b066ff;
+    --text: #d4d4d4;
+    --muted: #6b6b6b;
+    --dim: #3a3a3a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 12px;
+    min-height: 100vh;
+  }
+  .topbar { background: #000; border-bottom: 1px solid var(--amber); padding: 8px 16px; display: flex; justify-content: space-between; font-size: 11px; }
+  .topbar .brand { color: var(--amber); font-weight: 700; letter-spacing: 2px; }
+  .ticker-band { background: #000; border-bottom: 1px solid var(--border); padding: 4px 16px; display: flex; gap: 28px; font-size: 11px; }
+  .up { color: var(--green); } .down { color: var(--red); }
+
+  .grid {
+    padding: 12px;
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 12px;
+    height: calc(100vh - 70px);
+  }
+  .left, .right { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+  .left { display: grid; grid-template-rows: auto 1fr 1fr; gap: 12px; }
+
+  .panel { background: var(--panel); border: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+  .head { background: #000; border-bottom: 1px solid var(--border); padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; font-size: 10px; letter-spacing: 1.5px; color: var(--amber); text-transform: uppercase; }
+  .head .meta { color: var(--muted); }
+  .body { padding: 16px; flex: 1; overflow: auto; }
+
+  /* Hero stat row */
+  .hero { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; }
+  .hero .cell { padding: 16px; border-right: 1px solid var(--border); }
+  .hero .cell:last-child { border-right: 0; }
+  .hero .lab { font-size: 9px; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; }
+  .hero .val { font-size: 24px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .hero .val.big { font-size: 36px; }
+  .hero .delta { font-size: 10px; margin-top: 2px; }
+  .hero .delta.green { color: var(--green); }
+  .hero .delta.red { color: var(--red); }
+  .hero .delta.amber { color: var(--amber); }
+
+  /* Flow viz */
+  .flow-box { padding: 18px; }
+  .flow-row { display: flex; align-items: center; gap: 8px; height: 32px; }
+  .flow-row .pill { padding: 4px 12px; font-size: 11px; font-weight: 700; letter-spacing: 1px; border-radius: 0; }
+  .pill.income { background: var(--green); color: #000; }
+  .pill.fixed { background: var(--red); color: #000; }
+  .pill.subs { background: var(--amber); color: #000; }
+  .pill.dca { background: var(--cyan); color: #000; }
+  .pill.free { background: var(--purple); color: #000; }
+  .flow-bar { flex: 1; height: 24px; background: var(--grid); border: 1px solid var(--border); position: relative; }
+  .flow-bar .fill { height: 100%; }
+
+  /* Event feed (right) */
+  .feed-item { display: grid; grid-template-columns: 38px 1fr auto; gap: 10px; padding: 10px 0; border-bottom: 1px dotted var(--dim); align-items: center; }
+  .feed-icon {
+    width: 38px; height: 38px; border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+  }
+  .feed-icon.green { color: var(--green); border-color: var(--green); }
+  .feed-icon.red { color: var(--red); border-color: var(--red); }
+  .feed-icon.amber { color: var(--amber); border-color: var(--amber); }
+  .feed-icon.cyan { color: var(--cyan); border-color: var(--cyan); }
+  .feed-body .title { font-size: 12px; }
+  .feed-body .sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .feed-amt { font-variant-numeric: tabular-nums; font-weight: 700; text-align: right; }
+  .feed-amt .when { font-size: 10px; color: var(--muted); display: block; }
+
+  /* Mini panels in left bottom */
+  .mini-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+  .row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dotted var(--dim); font-size: 11px; }
+  .row:last-child { border: 0; }
+  .row .k { color: var(--muted); text-transform: uppercase; }
+  .v.green { color: var(--green); } .v.red { color: var(--red); } .v.amber { color: var(--amber); } .v.cyan { color: var(--cyan); }
+  .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--green); display: inline-block; animation: pulse 1.8s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">◉ GOD'S EYE / TERMINAL</div>
+  <div style="color:var(--muted);">HOME · MONEY MAP · GURU · GOALS · SETTINGS</div>
+  <div style="color:var(--muted);">BASE: SGD · 2026-05-25 23:31 SGT · SHANE</div>
+</div>
+<div class="ticker-band">
+  <span>SPX <span class="up">5,847 ▲ 0.42%</span></span>
+  <span>NDX <span class="up">20,512 ▲ 0.78%</span></span>
+  <span>BTC <span class="down">77,164 ▼ 1.24%</span></span>
+  <span>ETH <span class="up">3,820 ▲ 0.31%</span></span>
+  <span>USD/SGD <span class="down">1.3421 ▼ 0.08%</span></span>
+  <span>VIX <span class="up">14.82 ▲ 2.10%</span></span>
+</div>
+
+<div class="grid">
+  <div class="left">
+
+    <!-- Hero row of 5 key metrics -->
+    <div class="panel">
+      <div class="head"><span>◢ MISSION VITALS</span><span class="meta">REAL-TIME</span></div>
+      <div class="hero">
+        <div class="cell">
+          <div class="lab">NET WORTH</div>
+          <div class="val big" style="color:var(--text);">S$284,512</div>
+          <div class="delta green">▲ +4.18% MoM</div>
+        </div>
+        <div class="cell">
+          <div class="lab">ASSETS</div>
+          <div class="val" style="color:var(--green);">S$386K</div>
+          <div class="delta green">8 positions</div>
+        </div>
+        <div class="cell">
+          <div class="lab">DEBT</div>
+          <div class="val" style="color:var(--red);">S$102K</div>
+          <div class="delta red">2 loans · 3.5% avg</div>
+        </div>
+        <div class="cell">
+          <div class="lab">MO INCOME</div>
+          <div class="val" style="color:var(--green);">S$10,533</div>
+          <div class="delta amber">savings rate 48%</div>
+        </div>
+        <div class="cell">
+          <div class="lab">MO BURN</div>
+          <div class="val" style="color:var(--red);">S$5,477</div>
+          <div class="delta red">−4 subs renew this wk</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cash flow -->
+    <div class="panel">
+      <div class="head"><span>◢ CASH FLOW · MAY</span><span class="meta">SAVINGS RATE 48.1%</span></div>
+      <div class="flow-box">
+        <div class="flow-row">
+          <span class="pill income" style="width:120px;text-align:center;">INCOME +10,533</span>
+          <div class="flow-bar"><div class="fill" style="width:100%;background:var(--green);"></div></div>
+        </div>
+        <div class="flow-row">
+          <span class="pill fixed" style="width:120px;text-align:center;">FIXED −2,400</span>
+          <div class="flow-bar"><div class="fill" style="width:22%;background:var(--red);"></div></div>
+        </div>
+        <div class="flow-row">
+          <span class="pill subs" style="width:120px;text-align:center;">SUBS −510</span>
+          <div class="flow-bar"><div class="fill" style="width:5%;background:var(--amber);"></div></div>
+        </div>
+        <div class="flow-row">
+          <span class="pill dca" style="width:120px;text-align:center;">DCA −2,000</span>
+          <div class="flow-bar"><div class="fill" style="width:19%;background:var(--cyan);"></div></div>
+        </div>
+        <div class="flow-row">
+          <span class="pill free" style="width:120px;text-align:center;">FREE +5,056</span>
+          <div class="flow-bar"><div class="fill" style="width:48%;background:var(--purple);"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Three mini panels -->
+    <div class="mini-row">
+      <div class="panel">
+        <div class="head"><span>ASSET MIX</span></div>
+        <div class="body">
+          <div class="row"><span class="k">EQUITY</span><span class="v green">32%</span></div>
+          <div class="row"><span class="k">ETF</span><span class="v cyan">24%</span></div>
+          <div class="row"><span class="k">CRYPTO</span><span class="v amber">18%</span></div>
+          <div class="row"><span class="k">CASH</span><span class="v">14%</span></div>
+          <div class="row"><span class="k">REAL ESTATE</span><span class="v">12%</span></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="head"><span>TOP SUBS</span></div>
+        <div class="body">
+          <div class="row"><span class="k">AWS</span><span class="v amber">S$92</span></div>
+          <div class="row"><span class="k">CLAUDE</span><span class="v amber">S$27</span></div>
+          <div class="row"><span class="k">CURSOR</span><span class="v amber">S$27</span></div>
+          <div class="row"><span class="k">SPOTIFY</span><span class="v amber">S$17</span></div>
+          <div class="row"><span class="k">+ 8 MORE</span><span class="v">S$347</span></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="head"><span>FIRE PROGRESS</span></div>
+        <div class="body" style="text-align:center;padding-top:24px;">
+          <div style="font-size:36px;color:var(--amber);font-weight:700;">76%</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:8px;">TARGET S$375K</div>
+          <div style="font-size:10px;color:var(--green);margin-top:4px;">ETA 14 months</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- RIGHT: Event feed -->
+  <div class="right">
+    <div class="panel">
+      <div class="head"><span><span class="pulse"></span> &nbsp;EVENT FEED</span><span class="meta">UPCOMING 30D</span></div>
+      <div class="body">
+
+        <div class="feed-item">
+          <div class="feed-icon green">▲</div>
+          <div class="feed-body">
+            <div class="title">ACME CORP — SALARY</div>
+            <div class="sub">monthly · auto deposit</div>
+          </div>
+          <div class="feed-amt"><span style="color:var(--green);">+S$8,500</span><span class="when">in 5 days</span></div>
+        </div>
+
+        <div class="feed-item">
+          <div class="feed-icon red">▼</div>
+          <div class="feed-body">
+            <div class="title">AWS — CLOUD BILL</div>
+            <div class="sub">subscription · auto-charge</div>
+          </div>
+          <div class="feed-amt"><span style="color:var(--red);">−S$92</span><span class="when">in 3 days</span></div>
+        </div>
+
+        <div class="feed-item">
+          <div class="feed-icon green">★</div>
+          <div class="feed-body">
+            <div class="title">VOO DIVIDEND</div>
+            <div class="sub">quarterly · 50 shares</div>
+          </div>
+          <div class="feed-amt"><span style="color:var(--green);">+S$192</span><span class="when">in 11 days</span></div>
+        </div>
+
+        <div class="feed-item">
+          <div class="feed-icon red">▼</div>
+          <div class="feed-body">
+            <div class="title">HOME LOAN PAYMENT</div>
+            <div class="sub">monthly · auto-deduct</div>
+          </div>
+          <div class="feed-amt"><span style="color:var(--red);">−S$1,540</span><span class="when">in 14 days</span></div>
+        </div>
+
+        <div class="feed-item">
+          <div class="feed-icon amber">⚡</div>
+          <div class="feed-body">
+            <div class="title">FIRE TARGET 80% MILESTONE</div>
+            <div class="sub">at current rate · projection</div>
+          </div>
+          <div class="feed-amt"><span style="color:var(--amber);">S$300K</span><span class="when">in ~7 weeks</span></div>
+        </div>
+
+        <div class="feed-item">
+          <div class="feed-icon cyan">○</div>
+          <div class="feed-body">
+            <div class="title">VOO DCA · MONTHLY BUY</div>
+            <div class="sub">commitment · S$1,000 set aside</div>
+          </div>
+          <div class="feed-amt"><span style="color:var(--cyan);">−S$1,000</span><span class="when">in 1 day</span></div>
+        </div>
+
+        <div class="feed-item">
+          <div class="feed-icon red">!</div>
+          <div class="feed-body">
+            <div class="title">CREDIT CARD DUE</div>
+            <div class="sub">26% APR if missed</div>
+          </div>
+          <div class="feed-amt"><span style="color:var(--red);">−S$6,288</span><span class="when">in 8 days</span></div>
+        </div>
+
+        <div class="feed-item">
+          <div class="feed-icon green">▲</div>
+          <div class="feed-body">
+            <div class="title">SIDE PROJECT INVOICE</div>
+            <div class="sub">other · pending payout</div>
+          </div>
+          <div class="feed-amt"><span style="color:var(--green);">+S$1,000</span><span class="when">~30 days</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

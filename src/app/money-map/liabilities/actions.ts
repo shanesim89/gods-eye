@@ -5,7 +5,7 @@ import { db } from "@/db/client";
 import { liabilities } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 
-const CURRENCIES = ["USD", "SGD", "EUR", "GBP", "JPY", "CNY", "AUD"];
+const CURRENCIES = ["SGD", "USD", "EUR", "GBP", "JPY", "CNY", "AUD", "MYR", "HKD"];
 
 export async function createLiability(formData: FormData) {
   const user = await requireUser();

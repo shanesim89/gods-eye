@@ -6,7 +6,7 @@ import { subscriptions } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 
 const CYCLES = ["monthly", "yearly", "weekly", "quarterly"] as const;
-const CURRENCIES = ["USD", "SGD", "EUR", "GBP", "JPY", "CNY", "AUD"];
+const CURRENCIES = ["SGD", "USD", "EUR", "GBP", "JPY", "CNY", "AUD", "MYR", "HKD"];
 
 export async function createSubscription(formData: FormData) {
   const user = await requireUser();

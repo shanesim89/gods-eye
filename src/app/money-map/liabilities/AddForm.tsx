@@ -23,7 +23,7 @@ export function AddForm() {
       <NumInput name="balance" placeholder="BALANCE" required />
       <NumInput name="interest_rate" placeholder="RATE % (opt)" step="0.001" />
       <div className="flex gap-2">
-        <Select name="currency" options={CURRENCIES} defaultValue="USD" uppercase={false} className="flex-1" />
+        <Select name="currency" options={CURRENCIES} defaultValue="SGD" uppercase={false} className="flex-1" />
         <SubmitBtn pending={pending} />
       </div>
       {err && <div className="md:col-span-5 text-red text-[11px]">! {err}</div>}

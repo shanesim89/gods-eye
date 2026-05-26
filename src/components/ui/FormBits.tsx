@@ -2,7 +2,7 @@
 import { useTransition } from "react";
 
 export const CYCLES = ["monthly", "yearly", "weekly", "quarterly", "daily"] as const;
-export const CURRENCIES = ["USD", "SGD", "EUR", "GBP", "JPY", "CNY", "AUD"] as const;
+export const CURRENCIES = ["SGD", "USD", "EUR", "GBP", "JPY", "CNY", "AUD", "MYR", "HKD"] as const;
 export const INCOME_TYPES = ["salary", "dividend", "interest", "rental", "side", "other"] as const;
 
 const baseInput =

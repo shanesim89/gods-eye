@@ -6,7 +6,7 @@ import { fixed_expenses, investment_commitments } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 
 const CYCLES = ["monthly", "yearly", "weekly", "quarterly", "daily"];
-const CURRENCIES = ["USD", "SGD", "EUR", "GBP", "JPY", "CNY", "AUD"];
+const CURRENCIES = ["SGD", "USD", "EUR", "GBP", "JPY", "CNY", "AUD", "MYR", "HKD"];
 
 function validate(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();

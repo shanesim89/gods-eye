@@ -38,7 +38,7 @@ export async function getOrCreateUser(): Promise<{
     .values({
       clerk_id: userId,
       email,
-      base_currency: "USD",
+      base_currency: "SGD",
     })
     .returning();
 

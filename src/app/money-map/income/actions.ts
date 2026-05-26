@@ -6,7 +6,7 @@ import { income_sources } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 
 const CYCLES = ["monthly", "yearly", "weekly", "quarterly", "daily"];
-const CURRENCIES = ["USD", "SGD", "EUR", "GBP", "JPY", "CNY", "AUD"];
+const CURRENCIES = ["SGD", "USD", "EUR", "GBP", "JPY", "CNY", "AUD", "MYR", "HKD"];
 const TYPES = ["salary", "dividend", "interest", "rental", "side", "other"];
 
 export async function createIncome(formData: FormData) {

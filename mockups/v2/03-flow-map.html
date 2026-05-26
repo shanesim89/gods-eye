@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>God's Eye v2 — Flow Map (Network Graph)</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --panel: #121212;
+    --border: #1f1f1f;
+    --grid: #161616;
+    --amber: #ffb000;
+    --green: #00ff7f;
+    --red: #ff3b3b;
+    --cyan: #00e5ff;
+    --purple: #b066ff;
+    --text: #d4d4d4;
+    --muted: #6b6b6b;
+    --dim: #3a3a3a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 12px;
+    min-height: 100vh;
+  }
+  .topbar { background: #000; border-bottom: 1px solid var(--amber); padding: 8px 16px; display: flex; justify-content: space-between; font-size: 11px; }
+  .topbar .brand { color: var(--amber); font-weight: 700; letter-spacing: 2px; }
+  .ticker-band { background: #000; border-bottom: 1px solid var(--border); padding: 4px 16px; display: flex; gap: 28px; font-size: 11px; }
+  .up { color: var(--green); } .down { color: var(--red); }
+
+  /* Layout */
+  .layout {
+    display: grid;
+    grid-template-columns: 240px 1fr 240px;
+    gap: 0;
+    height: calc(100vh - 70px);
+  }
+
+  /* Side rails */
+  .rail { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+  .rail.right { border-right: 0; border-left: 1px solid var(--border); }
+  .rail .head { background: #000; border-bottom: 1px solid var(--border); padding: 8px 12px; font-size: 10px; letter-spacing: 1.5px; color: var(--amber); text-transform: uppercase; }
+  .rail .body { padding: 12px; overflow: auto; flex: 1; }
+  .rail .stat { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .rail .stat .ccy { font-size: 11px; color: var(--muted); }
+  .rail .sub { font-size: 10px; color: var(--muted); margin-top: 4px; }
+  .rail .row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dotted var(--dim); font-size: 11px; }
+  .rail .row .k { color: var(--muted); }
+  .rail .row .v.green { color: var(--green); }
+  .rail .row .v.red { color: var(--red); }
+  .rail .row .v.amber { color: var(--amber); }
+  .rail .row .v.cyan { color: var(--cyan); }
+  .rail .label-block { margin: 16px 0 8px; font-size: 10px; color: var(--cyan); letter-spacing: 1.5px; text-transform: uppercase; }
+
+  /* Canvas */
+  .canvas {
+    background:
+      radial-gradient(circle at center, rgba(255,176,0,0.04), transparent 50%),
+      var(--bg);
+    position: relative;
+    overflow: hidden;
+  }
+  .canvas svg { width: 100%; height: 100%; display: block; }
+
+  .node-box {
+    position: absolute;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: center;
+    min-width: 130px;
+  }
+  .node-box.income { border-color: var(--green); }
+  .node-box.center { border-color: var(--amber); box-shadow: 0 0 24px rgba(255,176,0,0.2); }
+  .node-box.expense { border-color: var(--red); }
+  .node-box.save { border-color: var(--cyan); }
+  .node-box .label { font-size: 9px; color: var(--muted); letter-spacing: 1.5px; text-transform: uppercase; }
+  .node-box .amount { font-size: 16px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .node-box.income .amount { color: var(--green); }
+  .node-box.center .amount { color: var(--amber); font-size: 28px; }
+  .node-box.expense .amount { color: var(--red); }
+  .node-box.save .amount { color: var(--cyan); }
+
+  .legend { position: absolute; bottom: 16px; left: 16px; display: flex; gap: 16px; font-size: 10px; }
+  .legend .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: middle; }
+
+  .floating-stats {
+    position: absolute; top: 16px; right: 16px;
+    background: rgba(0,0,0,0.6);
+    border: 1px solid var(--border);
+    padding: 12px 16px;
+    backdrop-filter: blur(8px);
+  }
+  .floating-stats .lab { font-size: 9px; color: var(--muted); letter-spacing: 1.5px; }
+  .floating-stats .val { font-size: 14px; font-weight: 700; margin-top: 2px; }
+  .floating-stats .val.green { color: var(--green); }
+  .floating-stats .val.amber { color: var(--amber); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">◉ GOD'S EYE / TERMINAL</div>
+  <div style="color:var(--muted);">HOME · MONEY MAP · GURU · GOALS · SETTINGS</div>
+  <div style="color:var(--muted);">BASE: SGD · 2026-05-25 23:31 SGT · SHANE</div>
+</div>
+<div class="ticker-band">
+  <span>SPX <span class="up">5,847 ▲ 0.42%</span></span>
+  <span>NDX <span class="up">20,512 ▲ 0.78%</span></span>
+  <span>BTC <span class="down">77,164 ▼ 1.24%</span></span>
+  <span>USD/SGD <span class="down">1.3421 ▼ 0.08%</span></span>
+</div>
+
+<div class="layout">
+
+  <!-- LEFT RAIL: SOURCES -->
+  <div class="rail">
+    <div class="head">◢ INFLOW SOURCES</div>
+    <div class="body">
+      <div class="stat" style="color:var(--green);"><span class="ccy">S$</span>10,533<span class="ccy">/mo</span></div>
+      <div class="sub">total monthly inflow</div>
+
+      <div class="label-block">BREAKDOWN</div>
+      <div class="row"><span class="k">SALARY</span><span class="v green">S$8,500</span></div>
+      <div class="row"><span class="k">DIVIDENDS</span><span class="v green">S$1,033</span></div>
+      <div class="row"><span class="k">SIDE WORK</span><span class="v amber">S$1,000</span></div>
+
+      <div class="label-block">YTD</div>
+      <div class="row"><span class="k">SALARY YTD</span><span class="v">S$42K</span></div>
+      <div class="row"><span class="k">DIVIDENDS YTD</span><span class="v">S$4.2K</span></div>
+    </div>
+  </div>
+
+  <!-- CENTER: NETWORK GRAPH -->
+  <div class="canvas">
+
+    <svg viewBox="0 0 800 580" preserveAspectRatio="xMidYMid meet" style="position:absolute;inset:0;">
+      <defs>
+        <linearGradient id="incomeFlow" x1="0" x2="1">
+          <stop offset="0" stop-color="#00ff7f" stop-opacity="0.5"/>
+          <stop offset="1" stop-color="#ffb000" stop-opacity="0.5"/>
+        </linearGradient>
+        <linearGradient id="outFlow" x1="0" x2="1">
+          <stop offset="0" stop-color="#ffb000" stop-opacity="0.5"/>
+          <stop offset="1" stop-color="#ff3b3b" stop-opacity="0.5"/>
+        </linearGradient>
+        <linearGradient id="saveFlow" x1="0" x2="1">
+          <stop offset="0" stop-color="#ffb000" stop-opacity="0.5"/>
+          <stop offset="1" stop-color="#00e5ff" stop-opacity="0.5"/>
+        </linearGradient>
+      </defs>
+      <!-- Income paths into center -->
+      <path d="M40,110 C200,110 280,260 380,280" stroke="url(#incomeFlow)" stroke-width="8" fill="none"/>
+      <path d="M40,260 C200,260 280,280 380,290" stroke="url(#incomeFlow)" stroke-width="3" fill="none"/>
+      <path d="M40,410 C200,410 280,320 380,310" stroke="url(#incomeFlow)" stroke-width="3" fill="none"/>
+
+      <!-- Center to outflows -->
+      <path d="M460,290 C560,290 600,90 720,110" stroke="url(#outFlow)" stroke-width="5" fill="none"/>
+      <path d="M460,300 C560,300 600,210 720,230" stroke="url(#outFlow)" stroke-width="2" fill="none"/>
+      <path d="M460,310 C560,310 600,330 720,350" stroke="url(#outFlow)" stroke-width="4" fill="none"/>
+      <path d="M460,320 C560,320 600,440 720,460" stroke="url(#saveFlow)" stroke-width="8" fill="none"/>
+
+      <!-- Animated dot flow -->
+      <circle r="3" fill="#00ff7f">
+        <animateMotion dur="3s" repeatCount="indefinite"
+          path="M40,110 C200,110 280,260 380,280"/>
+      </circle>
+      <circle r="3" fill="#00ff7f">
+        <animateMotion dur="4s" repeatCount="indefinite" begin="0.5s"
+          path="M40,260 C200,260 280,280 380,290"/>
+      </circle>
+      <circle r="3" fill="#ffb000">
+        <animateMotion dur="3.5s" repeatCount="indefinite" begin="1s"
+          path="M460,290 C560,290 600,90 720,110"/>
+      </circle>
+      <circle r="3" fill="#00e5ff">
+        <animateMotion dur="2.5s" repeatCount="indefinite" begin="1.5s"
+          path="M460,320 C560,320 600,440 720,460"/>
+      </circle>
+    </svg>
+
+    <!-- Income nodes (left side of canvas, positioned over svg) -->
+    <div class="node-box income" style="top:12%; left:2%;">
+      <div class="label">SALARY · ACME</div>
+      <div class="amount">+S$8,500</div>
+    </div>
+    <div class="node-box income" style="top:40%; left:2%;">
+      <div class="label">DIVIDENDS</div>
+      <div class="amount">+S$1,033</div>
+    </div>
+    <div class="node-box income" style="top:66%; left:2%;">
+      <div class="label">SIDE PROJECT</div>
+      <div class="amount">+S$1,000</div>
+    </div>
+
+    <!-- Center node -->
+    <div class="node-box center" style="top:42%; left:42%;">
+      <div class="label">NET WORTH</div>
+      <div class="amount">S$284,512</div>
+      <div style="font-size:10px;color:var(--green);margin-top:4px;">▲ +4.18% MoM</div>
+    </div>
+
+    <!-- Outflow + savings nodes (right side) -->
+    <div class="node-box expense" style="top:8%; right:2%;">
+      <div class="label">FIXED EXP</div>
+      <div class="amount">−S$2,400</div>
+    </div>
+    <div class="node-box expense" style="top:30%; right:2%;">
+      <div class="label">SUBS · 12</div>
+      <div class="amount">−S$510</div>
+    </div>
+    <div class="node-box expense" style="top:52%; right:2%;">
+      <div class="label">DCA INVEST</div>
+      <div class="amount">−S$2,000</div>
+    </div>
+    <div class="node-box save" style="top:74%; right:2%;">
+      <div class="label">FREE CASH</div>
+      <div class="amount">+S$5,623</div>
+    </div>
+
+    <div class="floating-stats">
+      <div class="lab">SAVINGS RATE</div>
+      <div class="val green">48.1%</div>
+      <div class="lab" style="margin-top:8px;">FIRE PROGRESS</div>
+      <div class="val amber">76%</div>
+      <div class="lab" style="margin-top:8px;">ETA TARGET</div>
+      <div class="val">14 months</div>
+    </div>
+
+    <div class="legend">
+      <span><span class="dot" style="background:var(--green);"></span>INFLOW</span>
+      <span><span class="dot" style="background:var(--amber);"></span>HUB</span>
+      <span><span class="dot" style="background:var(--red);"></span>OUTFLOW</span>
+      <span><span class="dot" style="background:var(--cyan);"></span>SAVED</span>
+    </div>
+  </div>
+
+  <!-- RIGHT RAIL: OUTFLOWS + EVENTS -->
+  <div class="rail right">
+    <div class="head">◢ OUTFLOW · MO</div>
+    <div class="body">
+      <div class="stat" style="color:var(--red);">−<span class="ccy">S$</span>4,910<span class="ccy">/mo</span></div>
+      <div class="sub">total monthly outflow</div>
+
+      <div class="label-block">CATEGORIES</div>
+      <div class="row"><span class="k">FIXED</span><span class="v red">S$2,400</span></div>
+      <div class="row"><span class="k">SUBS</span><span class="v amber">S$510</span></div>
+      <div class="row"><span class="k">DCA</span><span class="v cyan">S$2,000</span></div>
+
+      <div class="label-block">NEXT EVENTS</div>
+      <div class="row"><span class="k">AWS · 3D</span><span class="v red">S$92</span></div>
+      <div class="row"><span class="k">SALARY · 5D</span><span class="v green">S$8,500</span></div>
+      <div class="row"><span class="k">CLAUDE · 7D</span><span class="v red">S$27</span></div>
+      <div class="row"><span class="k">VOO DIV · 11D</span><span class="v green">S$192</span></div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

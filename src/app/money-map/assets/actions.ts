@@ -15,7 +15,7 @@ const ASSET_CLASSES = [
   "commodity",
   "other",
 ] as const;
-const CURRENCIES = ["USD", "SGD", "EUR", "GBP", "JPY", "CNY", "AUD"];
+const CURRENCIES = ["SGD", "USD", "EUR", "GBP", "JPY", "CNY", "AUD", "MYR", "HKD"];
 
 export async function createAsset(formData: FormData) {
   const user = await requireUser();

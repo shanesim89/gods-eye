@@ -28,7 +28,7 @@ export function FixedExpenseForm() {
     >
       <TextInput name="name" placeholder="NAME (rent, internet, etc)" required className="uppercase md:col-span-2" />
       <NumInput name="amount" placeholder="AMOUNT" required />
-      <Select name="currency" options={CURRENCIES} defaultValue="USD" uppercase={false} />
+      <Select name="currency" options={CURRENCIES} defaultValue="SGD" uppercase={false} />
       <div className="flex gap-2">
         <Select name="cycle" options={CYCLES} defaultValue="monthly" className="flex-1" />
         <SubmitBtn pending={pending} />
@@ -56,7 +56,7 @@ export function CommitmentForm() {
     >
       <TextInput name="name" placeholder="NAME (VOO DCA, BTC DCA, etc)" required className="uppercase md:col-span-2" />
       <NumInput name="target_amount" placeholder="TARGET AMOUNT" required />
-      <Select name="currency" options={CURRENCIES} defaultValue="USD" uppercase={false} />
+      <Select name="currency" options={CURRENCIES} defaultValue="SGD" uppercase={false} />
       <div className="flex gap-2">
         <Select name="cycle" options={CYCLES} defaultValue="monthly" className="flex-1" />
         <SubmitBtn pending={pending} />

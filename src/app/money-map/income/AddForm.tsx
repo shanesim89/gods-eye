@@ -29,7 +29,7 @@ export function AddForm() {
     >
       <TextInput name="name" placeholder="SOURCE (ACME CORP, VOO, etc)" required className="uppercase md:col-span-2" />
       <NumInput name="amount" placeholder="AMOUNT" required />
-      <Select name="currency" options={CURRENCIES} defaultValue="USD" uppercase={false} />
+      <Select name="currency" options={CURRENCIES} defaultValue="SGD" uppercase={false} />
       <Select name="cycle" options={CYCLES} defaultValue="monthly" />
       <div className="flex gap-2">
         <Select name="type" options={INCOME_TYPES} defaultValue="salary" className="flex-1" />

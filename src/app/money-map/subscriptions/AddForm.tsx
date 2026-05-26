@@ -42,7 +42,7 @@ export function AddForm() {
       />
       <select
         name="currency"
-        defaultValue="USD"
+        defaultValue="SGD"
         className="bg-grid border border-border px-2 py-1 text-text"
       >
         {CURRENCIES.map((c) => (
