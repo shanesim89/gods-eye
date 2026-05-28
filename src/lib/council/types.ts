@@ -10,12 +10,24 @@ export type AgentResult = {
   keyPoints: string[];
 };
 
+export type PriceRange = { low: number; high: number };
+
+export type TradeLevels = {
+  entry: PriceRange;        // zone to open position
+  target: PriceRange;       // T1 (low) → T2 (high) take-profit zone
+  stopLoss: number;         // single hard stop price
+  buyTrigger?: number;      // HOLD only: re-evaluate BUY below this
+  sellTrigger?: number;     // HOLD only: re-evaluate SELL above this
+  rationale: string;        // 1-sentence why these levels
+};
+
 export type Verdict = {
   verdict: VerdictType;
   confidence: number; // 0–100
   summary: string;
   agents: AgentResult[];
   generatedAt: string;
+  tradeLevels?: TradeLevels | null; // null/undefined for legacy cached rows
 };
 
 export type StreamEvent =

@@ -2,7 +2,14 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { AgentPanel } from "./AgentPanel";
-import type { AgentResult, AssetClass, StreamEvent, Verdict } from "@/lib/council/types";
+import type {
+  AgentResult,
+  AssetClass,
+  StreamEvent,
+  TradeLevels,
+  Verdict,
+  VerdictType,
+} from "@/lib/council/types";
 
 type Props = {
   ticker: string;
@@ -266,6 +273,11 @@ export function CouncilCard({ ticker, assetClass }: Props) {
         </div>
       )}
 
+      {/* Trade Levels sub-card */}
+      {verdict && verdict.tradeLevels && (
+        <TradeLevelsCard verdict={verdict.verdict} levels={verdict.tradeLevels} />
+      )}
+
       {/* Footer: button + debate toggle */}
       <div className="flex items-center gap-2 flex-wrap">
         <button
@@ -310,6 +322,120 @@ export function CouncilCard({ ticker, assetClass }: Props) {
               )}
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function fmtPrice(v: number | undefined | null): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  if (v < 1) return `$${v.toPrecision(4)}`;
+  if (v >= 1000) return `$${v.toFixed(0)}`;
+  return `$${v.toFixed(2)}`;
+}
+
+function TradeLevelsCard({
+  verdict,
+  levels,
+}: {
+  verdict: VerdictType;
+  levels: TradeLevels;
+}) {
+  const isHold = verdict === "HOLD";
+  const accent =
+    verdict === "BUY"
+      ? "text-green"
+      : verdict === "SELL"
+      ? "text-red"
+      : "text-amber";
+
+  return (
+    <div className="border border-border bg-grid p-3 mb-2">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-muted text-[10px] uppercase tracking-[1px]">
+          ◇ TRADE LEVELS
+        </div>
+        <div className={`text-[10px] uppercase tracking-[1px] font-bold ${accent}`}>
+          {verdict}
+        </div>
+      </div>
+
+      <table className="w-full text-[11px] tabular-nums">
+        <tbody>
+          {isHold ? (
+            <>
+              {levels.buyTrigger != null && (
+                <tr className="dotted-row">
+                  <td className="py-0.5 text-muted pr-3 whitespace-nowrap uppercase text-[10px]">
+                    Re-eval BUY
+                  </td>
+                  <td className="py-0.5 text-right text-green">
+                    below {fmtPrice(levels.buyTrigger)}
+                  </td>
+                </tr>
+              )}
+              {levels.sellTrigger != null && (
+                <tr className="dotted-row">
+                  <td className="py-0.5 text-muted pr-3 whitespace-nowrap uppercase text-[10px]">
+                    Re-eval SELL
+                  </td>
+                  <td className="py-0.5 text-right text-red">
+                    above {fmtPrice(levels.sellTrigger)}
+                  </td>
+                </tr>
+              )}
+              <tr className="dotted-row">
+                <td className="py-0.5 text-muted pr-3 whitespace-nowrap uppercase text-[10px]">
+                  Neutral range
+                </td>
+                <td className="py-0.5 text-right text-amber">
+                  {fmtPrice(levels.entry.low)} — {fmtPrice(levels.entry.high)}
+                </td>
+              </tr>
+              <tr className="dotted-row">
+                <td className="py-0.5 text-muted pr-3 whitespace-nowrap uppercase text-[10px]">
+                  Hard stop
+                </td>
+                <td className="py-0.5 text-right text-dim">
+                  {fmtPrice(levels.stopLoss)}
+                </td>
+              </tr>
+            </>
+          ) : (
+            <>
+              <tr className="dotted-row">
+                <td className="py-0.5 text-muted pr-3 whitespace-nowrap uppercase text-[10px]">
+                  Entry
+                </td>
+                <td className="py-0.5 text-right text-amber font-bold">
+                  {fmtPrice(levels.entry.low)} — {fmtPrice(levels.entry.high)}
+                </td>
+              </tr>
+              <tr className="dotted-row">
+                <td className="py-0.5 text-muted pr-3 whitespace-nowrap uppercase text-[10px]">
+                  Target
+                </td>
+                <td className="py-0.5 text-right text-green font-bold">
+                  {fmtPrice(levels.target.low)} — {fmtPrice(levels.target.high)}
+                </td>
+              </tr>
+              <tr className="dotted-row">
+                <td className="py-0.5 text-muted pr-3 whitespace-nowrap uppercase text-[10px]">
+                  Stop loss
+                </td>
+                <td className="py-0.5 text-right text-red font-bold">
+                  {fmtPrice(levels.stopLoss)}
+                </td>
+              </tr>
+            </>
+          )}
+        </tbody>
+      </table>
+
+      {levels.rationale && (
+        <div className="mt-2 pt-2 border-t border-border/40 text-[10px] text-dim leading-relaxed">
+          {levels.rationale}
         </div>
       )}
     </div>

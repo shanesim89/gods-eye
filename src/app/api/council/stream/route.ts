@@ -56,12 +56,18 @@ export async function POST(req: Request) {
 
         if (cached.length > 0) {
           const row = cached[0];
+          const payload = row.payload as {
+            summary?: string;
+            agents?: Verdict["agents"];
+            tradeLevels?: Verdict["tradeLevels"];
+          };
           const verdict: Verdict = {
             verdict: row.verdict as Verdict["verdict"],
             confidence: row.confidence ?? 50,
-            summary: (row.payload as { summary?: string }).summary ?? "",
-            agents: (row.payload as { agents?: Verdict["agents"] }).agents ?? [],
+            summary: payload.summary ?? "",
+            agents: payload.agents ?? [],
             generatedAt: row.fetched_at.toISOString(),
+            tradeLevels: payload.tradeLevels ?? null,
           };
           emit({ type: "verdict", data: verdict });
           controller.close();
@@ -98,6 +104,7 @@ export async function POST(req: Request) {
           payload: {
             summary: verdict.summary,
             agents: verdict.agents,
+            tradeLevels: verdict.tradeLevels,
           } as Record<string, unknown>,
           fetched_at: new Date(),
         });

@@ -163,25 +163,47 @@ export async function buildContext(
         max_supply: number;
       };
     };
+    type MarketChart = {
+      prices: [number, number][];
+      total_volumes: [number, number][];
+    };
 
-    const [coinRes, lcRes] = await Promise.allSettled([
+    const [coinRes, chartRes, lcRes] = await Promise.allSettled([
       cgId
         ? cgGet<CoinDetail>(
             `/coins/${cgId}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false`
+          )
+        : Promise.resolve(null),
+      cgId
+        ? cgGet<MarketChart>(
+            `/coins/${cgId}/market_chart?vs_currency=usd&days=90&interval=daily`
           )
         : Promise.resolve(null),
       fetchLunarCrush("crypto", sym),
     ]);
 
     const coin  = coinRes.status === "fulfilled" ? coinRes.value : null;
+    const chart = chartRes.status === "fulfilled" ? chartRes.value : null;
     const lcData = lcRes.status  === "fulfilled" ? lcRes.value  : null;
     const md = coin?.market_data;
+
+    const cryptoCandles =
+      chart?.prices?.length
+        ? {
+            dates: chart.prices.map(([ts]) =>
+              new Date(ts).toISOString().slice(0, 10)
+            ),
+            closes: chart.prices.map(([, p]) => p),
+            volumes: chart.total_volumes?.map(([, v]) => v) ?? [],
+          }
+        : null;
 
     return {
       ticker: sym,
       assetClass,
       price: md?.current_price?.usd ?? 0,
       changePct: md?.price_change_percentage_24h ?? 0,
+      candles: cryptoCandles,
       cryptoMeta: coin
         ? {
             name: coin.name,
@@ -210,18 +232,33 @@ export async function buildContext(
     const expiry = `20${raw.slice(0, 2)}-${raw.slice(2, 4)}-${raw.slice(4, 6)}`;
     const optionType = match[3] === "C" ? "CALL" : "PUT";
     const strike = `$${match[4]}`;
-    const [quoteRes, lcRes] = await Promise.allSettled([
+    const [quoteRes, finRes, candlesRes, lcRes] = await Promise.allSettled([
       getQuote(underlying),
+      getBasicFinancials(underlying),
+      getCandles(underlying, 90),
       fetchLunarCrush("stocks", underlying),
     ]);
-    const quote   = quoteRes.status === "fulfilled" ? quoteRes.value : null;
-    const lcData  = lcRes.status    === "fulfilled" ? lcRes.value    : null;
+    const quote   = quoteRes.status   === "fulfilled" ? quoteRes.value   : null;
+    const fin     = finRes.status     === "fulfilled" ? finRes.value     : null;
+    const candles = candlesRes.status === "fulfilled" ? candlesRes.value : null;
+    const lcData  = lcRes.status      === "fulfilled" ? lcRes.value      : null;
     optionsMeta = { underlying, optionType, strike, expiry, underlyingPrice: quote?.c ?? 0 };
     return {
       ticker: symbol,
       assetClass,
       price: quote?.c ?? 0,
       changePct: quote?.dp ?? 0,
+      financials: fin,
+      candles:
+        candles?.s === "ok" && candles.t?.length
+          ? {
+              dates: candles.t.map((ts) =>
+                new Date(ts * 1000).toISOString().slice(0, 10)
+              ),
+              closes: candles.c,
+              volumes: candles.v,
+            }
+          : null,
       optionsMeta,
       lunarcrush: lcData,
     };
