@@ -1,4 +1,5 @@
 import { Panel } from "@/components/ui/Panel";
+import { CouncilCard } from "@/components/council/CouncilCard";
 import { requireUser } from "@/lib/auth";
 import { TickerSearch } from "../../_components/TickerSearch";
 
@@ -64,18 +65,8 @@ export default async function OptionsPage({
         </div>
       </div>
 
-      <div className="border border-border bg-grid p-3 mt-3">
-        <div className="text-muted text-[10px] uppercase tracking-[1px] mb-2">
-          ◎ INVESTMENT COUNCIL — PHASE 3
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
-          {["TECHNICAL", "FLOW ANALYSIS", "SENTIMENT", "RISK"].map((agent) => (
-            <div key={agent} className="border border-border/40 p-2 text-dim">
-              <div className="text-muted mb-1">{agent}</div>
-              <div className="italic">awaiting phase 3…</div>
-            </div>
-          ))}
-        </div>
+      <div className="mt-3">
+        <CouncilCard ticker={symbol} assetClass="options" />
       </div>
     </Panel>
   );

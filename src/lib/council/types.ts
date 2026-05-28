@@ -1,0 +1,71 @@
+export type AssetClass = "stocks" | "etf" | "crypto" | "options";
+export type Signal = "bull" | "bear" | "neutral";
+export type VerdictType = "BUY" | "HOLD" | "SELL";
+
+export type AgentResult = {
+  role: string;
+  thesis: string;
+  signal: Signal;
+  confidence: number; // 0–100
+  keyPoints: string[];
+};
+
+export type Verdict = {
+  verdict: VerdictType;
+  confidence: number; // 0–100
+  summary: string;
+  agents: AgentResult[];
+  generatedAt: string;
+};
+
+export type StreamEvent =
+  | { type: "agent_start"; role: string }
+  | { type: "agent_done"; result: AgentResult }
+  | { type: "synth_start" }
+  | { type: "verdict"; data: Verdict }
+  | { type: "error"; message: string };
+
+export type CouncilContext = {
+  ticker: string;
+  assetClass: AssetClass;
+  price: number;
+  changePct: number;
+  // Equity/ETF fields
+  profile?: {
+    name: string;
+    exchange: string;
+    industry: string;
+    marketCap: number;
+    country: string;
+  } | null;
+  financials?: Record<string, number | undefined> | null;
+  candles?: { dates: string[]; closes: number[]; volumes: number[] } | null;
+  news?: { headline: string; source: string; datetime: number }[] | null;
+  // Crypto fields
+  cryptoMeta?: {
+    name: string;
+    marketCap: number;
+    volume24h: number;
+    change7d: number;
+    change30d: number;
+    circulatingSupply: number;
+    maxSupply: number | null;
+    athChangePct: number;
+    description: string;
+  } | null;
+  // Options fields
+  optionsMeta?: {
+    underlying: string;
+    optionType: string;
+    strike: string;
+    expiry: string;
+    underlyingPrice: number;
+  } | null;
+  // LunarCrush sentiment (all classes)
+  lunarcrush?: {
+    galaxyScore: number | null;
+    altRank: number | null;
+    socialVolume: number | null;
+    sentiment: number | null; // 0–100
+  } | null;
+};

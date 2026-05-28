@@ -1,4 +1,5 @@
 import { Panel } from "@/components/ui/Panel";
+import { CouncilCard } from "@/components/council/CouncilCard";
 import { requireUser } from "@/lib/auth";
 import {
   getProfile,
@@ -143,22 +144,9 @@ export default async function StockPage({
         </div>
       </div>
 
-      {/* Council stub */}
-      <div className="border border-border bg-grid p-3 mb-3">
-        <div className="text-muted text-[10px] uppercase tracking-[1px] mb-2">
-          ◎ INVESTMENT COUNCIL — PHASE 3
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
-          {["TECHNICAL", "FUNDAMENTAL", "SENTIMENT", "MACRO"].map((agent) => (
-            <div key={agent} className="border border-border/40 p-2 text-dim">
-              <div className="text-muted mb-1">{agent}</div>
-              <div className="italic">awaiting phase 3…</div>
-            </div>
-          ))}
-        </div>
-        <div className="mt-2 text-dim text-[10px]">
-          synthesized verdict · confidence score · debate log — coming in Phase 3
-        </div>
+      {/* Investment Council */}
+      <div className="mb-3">
+        <CouncilCard ticker={symbol} assetClass="stocks" />
       </div>
 
       {/* News */}
