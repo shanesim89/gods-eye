@@ -14,7 +14,8 @@ import {
 import { requireUser } from "@/lib/auth";
 import { eq } from "drizzle-orm";
 import { convert } from "@/lib/fx";
-import { fmtMoney, fmtPct, toMonthly, daysUntil } from "@/lib/format";
+import { fmtMoney, fmtPct, toMonthly, daysUntil, timeAgo } from "@/lib/format";
+import { hasStaleAssets, refreshUserAssets } from "@/lib/refresh-assets";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,14 @@ type Event = {
 export default async function MoneyMapPage() {
   const user = await requireUser();
   const base = user.base_currency;
+
+  // Fire-and-forget refresh if any tickerable asset is stale (>30min).
+  // Does not block render — next visit will show fresh values.
+  hasStaleAssets(user.id)
+    .then((stale) => {
+      if (stale) refreshUserAssets(user.id).catch(() => {});
+    })
+    .catch(() => {});
 
   const [assetRows, subRows, fxRows, liaRows, incRows, icRows] = await Promise.all([
     db.select().from(assets).where(eq(assets.user_id, user.id)),
@@ -183,7 +192,19 @@ export default async function MoneyMapPage() {
           <div className="p-4 border-r border-border">
             <div className="text-[9px] tracking-[1.5px] uppercase text-muted">ASSETS</div>
             <div className="text-xl md:text-2xl font-bold tabular-nums text-green">{fmtMoney(assetTotal, base, 0)}</div>
-            <div className="text-[10px] mt-1 text-muted">{assetRows.length} positions</div>
+            <div className="text-[10px] mt-1 text-muted">
+              {assetRows.length} positions
+              {(() => {
+                const lp = assetRows.map((a) => a.last_priced_at).filter(Boolean) as (Date | string)[];
+                if (lp.length === 0) return null;
+                const latest = lp.reduce<Date>((max, d) => {
+                  const dt = typeof d === "string" ? new Date(d) : d;
+                  return dt > max ? dt : max;
+                }, new Date(0));
+                if (latest.getTime() === 0) return null;
+                return <span className="text-amber"> · live {timeAgo(latest)}</span>;
+              })()}
+            </div>
           </div>
           <div className="p-4 border-r border-border">
             <div className="text-[9px] tracking-[1.5px] uppercase text-muted">DEBT</div>

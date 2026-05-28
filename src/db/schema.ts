@@ -7,6 +7,7 @@ import {
   jsonb,
   uuid,
   primaryKey,
+  boolean,
 } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
@@ -37,6 +38,8 @@ export const assets = pgTable("assets", {
   currency: text("currency").notNull(),
   asset_class: text("asset_class").notNull(),
   current_value: numeric("current_value", { precision: 18, scale: 2 }),
+  last_priced_at: timestamp("last_priced_at"),
+  auto_price: boolean("auto_price").default(true).notNull(),
   updated_at: timestamp("updated_at").defaultNow().notNull(),
 });
 

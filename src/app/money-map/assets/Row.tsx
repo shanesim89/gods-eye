@@ -1,10 +1,11 @@
 "use client";
 import { useState, useTransition, useRef } from "react";
 import { updateAsset, deleteAsset } from "./actions";
-import { fmtMoney } from "@/lib/format";
+import { fmtMoney, timeAgo } from "@/lib/format";
 
 const ASSET_CLASSES = ["cash", "equity", "etf", "crypto", "bond", "real_estate", "commodity", "other"];
 const CURRENCIES = ["SGD", "USD", "EUR", "GBP", "JPY", "CNY", "AUD", "MYR", "HKD"];
+const TICKERABLE = new Set(["equity", "etf", "crypto"]);
 
 type Asset = {
   id: string;
@@ -15,6 +16,8 @@ type Asset = {
   current_value: string | null;
   currency: string;
   asset_class: string;
+  auto_price: boolean;
+  last_priced_at: Date | string | null;
   cbBase: number;
   cvBase: number;
   linkedLiabilityId: string | null;
@@ -22,7 +25,6 @@ type Asset = {
 };
 
 type LiabilityOpt = { id: string; name: string };
-
 const input = "bg-grid border border-border px-1.5 py-0.5 text-text text-[11px]";
 
 export function AssetRow({ a, base, liabilities }: { a: Asset; base: string; liabilities: LiabilityOpt[] }) {
@@ -34,11 +36,13 @@ export function AssetRow({ a, base, liabilities }: { a: Asset; base: string; lia
   if (editing) {
     return (
       <tr className="dotted-row bg-grid">
-        <td colSpan={9} className="py-1.5">
+        <td colSpan={10} className="py-1.5">
           <form
             ref={formRef}
             action={(fd) => {
               setErr(null);
+              // Convert checkbox state to explicit value (unchecked = "false")
+              if (!fd.has("auto_price")) fd.set("auto_price", "false");
               start(async () => {
                 const r = await updateAsset(a.id, fd);
                 if (r && "error" in r && r.error) setErr(r.error);
@@ -58,6 +62,10 @@ export function AssetRow({ a, base, liabilities }: { a: Asset; base: string; lia
             <select name="currency" defaultValue={a.currency} className={input}>
               {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
+            <label className="flex items-center gap-1 text-[10px] text-muted">
+              <input type="checkbox" name="auto_price" value="true" defaultChecked={a.auto_price} />
+              AUTO
+            </label>
             <select name="linked_liability_id" defaultValue={a.linkedLiabilityId ?? ""} className={`${input} uppercase`}>
               <option value="">— no link —</option>
               {liabilities.map((l) => <option key={l.id} value={l.id}>↔ {l.name}</option>)}
@@ -73,7 +81,7 @@ export function AssetRow({ a, base, liabilities }: { a: Asset; base: string; lia
 
   const cv = a.current_value !== null ? Number(a.current_value) : null;
   const cb = Number(a.cost_basis ?? 0);
-  const gain = cv !== null ? cv - cb : null;
+  const canAutoPrice = TICKERABLE.has(a.asset_class) && !!a.ticker;
 
   return (
     <tr className="dotted-row">
@@ -84,9 +92,18 @@ export function AssetRow({ a, base, liabilities }: { a: Asset; base: string; lia
       <td className="py-1 pl-3 text-right">{fmtMoney(cb, a.currency, 2)}</td>
       <td className="py-1 pl-3 text-right">{cv !== null ? fmtMoney(cv, a.currency, 2) : <span className="text-muted">—</span>}</td>
       <td className="py-1 pl-3 text-right text-amber">{fmtMoney(a.cvBase || a.cbBase, base, 0)}</td>
+      <td className="py-1 pl-3 text-[10px] whitespace-nowrap">
+        {canAutoPrice ? (
+          <span className={a.auto_price ? "text-green" : "text-muted"}>
+            {a.auto_price ? "☑" : "☐"} {a.last_priced_at ? timeAgo(a.last_priced_at) : "never"}
+          </span>
+        ) : (
+          <span className="text-dim">n/a</span>
+        )}
+      </td>
       <td className="py-1 pl-3 text-[10px]">
         {a.linkedLiabilityName ? (
-          <span className="text-purple-400" style={{ color: "#b066ff" }}>↔ {a.linkedLiabilityName}</span>
+          <span style={{ color: "#b066ff" }}>↔ {a.linkedLiabilityName}</span>
         ) : (
           <span className="text-dim">—</span>
         )}

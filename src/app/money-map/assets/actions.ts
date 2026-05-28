@@ -34,6 +34,8 @@ export async function createAsset(formData: FormData) {
   const asset_class = String(formData.get("asset_class") ?? "");
   const linked_liability_id_raw = String(formData.get("linked_liability_id") ?? "");
   const linked_liability_id = linked_liability_id_raw && linked_liability_id_raw !== "" ? linked_liability_id_raw : null;
+  const auto_price_raw = formData.get("auto_price");
+  const auto_price = auto_price_raw === null ? true : (auto_price_raw === "true" || auto_price_raw === "on" || auto_price_raw === "1");
 
   if (!name && !ticker) return { error: "name or ticker required" };
   if (!Number.isFinite(qty) || qty <= 0) return { error: "qty must be > 0" };
@@ -58,6 +60,7 @@ export async function createAsset(formData: FormData) {
     current_value: current_value !== null ? String(current_value) : null,
     currency,
     asset_class,
+    auto_price,
   }).returning({ id: assets.id });
 
   // Update reverse link on liability
@@ -107,6 +110,10 @@ export async function updateAsset(id: string, formData: FormData) {
       if (!Number.isFinite(n) || n < 0) return { error: "current_value invalid" };
       patch.current_value = String(n);
     }
+  }
+  const ap = formData.get("auto_price");
+  if (ap !== null) {
+    patch.auto_price = ap === "true" || ap === "on" || ap === "1";
   }
   const currency = formData.get("currency");
   if (currency !== null) {

@@ -5,20 +5,35 @@ import { requireUser } from "@/lib/auth";
 import { eq, asc } from "drizzle-orm";
 import { convert } from "@/lib/fx";
 import { fmtMoney } from "@/lib/format";
+import { hasStaleAssets, refreshUserAssets } from "@/lib/refresh-assets";
 import { AddForm } from "./AddForm";
 import { AssetRow } from "./Row";
+import { RefreshBtn } from "./RefreshBtn";
 
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
   const user = await requireUser();
   const base = user.base_currency;
+
+  // Auto-refresh stale prices server-side (await briefly so first paint is fresh).
+  // Wrap with try/catch so any provider failure does not block page render.
+  try {
+    if (await hasStaleAssets(user.id)) {
+      await Promise.race([
+        refreshUserAssets(user.id),
+        new Promise((res) => setTimeout(res, 3000)),
+      ]);
+    }
+  } catch {
+    /* ignore */
+  }
+
   const [assetRows, liaRows] = await Promise.all([
     db.select().from(assets).where(eq(assets.user_id, user.id)).orderBy(asc(assets.asset_class), asc(assets.name)),
     db.select().from(liabilities).where(eq(liabilities.user_id, user.id)).orderBy(asc(liabilities.name)),
   ]);
 
-  // Build linked liability lookup: asset_id -> liability
   const liaByAsset: Record<string, { id: string; name: string }> = {};
   for (const l of liaRows) {
     if (l.linked_asset_id) liaByAsset[l.linked_asset_id] = { id: l.id, name: l.name };
@@ -55,6 +70,7 @@ export default async function Page() {
       title="ASSETS"
       meta={`${assetRows.length} POSITIONS · MARKET ${fmtMoney(totalCv, base, 0)} · COST ${fmtMoney(totalCb, base, 0)}`}
     >
+      <RefreshBtn />
       <AddForm liabilities={liabilityOpts} />
 
       {Object.keys(byClass).length > 0 && (
@@ -68,7 +84,7 @@ export default async function Page() {
       )}
 
       <div className="overflow-x-auto">
-        <table className="w-full text-[11px] border-collapse min-w-[900px]">
+        <table className="w-full text-[11px] border-collapse min-w-[1000px]">
           <thead>
             <tr className="text-muted uppercase tracking-[0.5px]">
               <th className="text-left py-1 border-b border-border font-normal">NAME</th>
@@ -78,13 +94,14 @@ export default async function Page() {
               <th className="text-right py-1 border-b border-border font-normal pl-3">COST</th>
               <th className="text-right py-1 border-b border-border font-normal pl-3">MARKET</th>
               <th className="text-right py-1 border-b border-border font-normal pl-3">VALUE ({base})</th>
+              <th className="text-left py-1 border-b border-border font-normal pl-3">AUTO · LAST</th>
               <th className="text-left py-1 border-b border-border font-normal pl-3">LINKED</th>
               <th className="text-right py-1 border-b border-border font-normal pl-3 w-20">ACTIONS</th>
             </tr>
           </thead>
           <tbody>
             {enriched.length === 0 && (
-              <tr><td colSpan={9} className="text-muted text-center py-4 italic">no assets yet — add above</td></tr>
+              <tr><td colSpan={10} className="text-muted text-center py-4 italic">no assets yet — add above</td></tr>
             )}
             {enriched.map((r) => (
               <AssetRow key={r.id} a={r as Parameters<typeof AssetRow>[0]["a"]} base={base} liabilities={liabilityOpts} />
