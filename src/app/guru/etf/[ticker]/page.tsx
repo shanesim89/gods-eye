@@ -1,14 +1,179 @@
 import { Panel } from "@/components/ui/Panel";
+import { requireUser } from "@/lib/auth";
+import {
+  getProfile,
+  getQuote,
+  getBasicFinancials,
+  getCandles,
+  getCompanyNews,
+} from "@/lib/finnhub";
+// Reuse stock chart — same data shape
+import { PriceChart } from "../../stocks/[ticker]/PriceChart";
+import { TickerSearch } from "../../_components/TickerSearch";
 
-export default async function Page({
+export const dynamic = "force-dynamic";
+
+function n(v: number | undefined | null, dec = 2, prefix = ""): string {
+  if (v == null || !Number.isFinite(v) || v === 0) return "—";
+  return `${prefix}${v.toFixed(dec)}`;
+}
+
+function fmtCap(millionsUSD: number | undefined | null): string {
+  if (millionsUSD == null || millionsUSD === 0) return "—";
+  if (millionsUSD >= 1_000_000) return `$${(millionsUSD / 1_000_000).toFixed(2)}T`;
+  if (millionsUSD >= 1_000) return `$${(millionsUSD / 1_000).toFixed(2)}B`;
+  return `$${millionsUSD.toFixed(0)}M`;
+}
+
+export default async function EtfPage({
   params,
 }: {
   params: Promise<{ ticker: string }>;
 }) {
+  await requireUser();
   const { ticker } = await params;
+  const symbol = ticker.toUpperCase();
+
+  const [profileRes, quoteRes, finRes, candlesRes, newsRes] = await Promise.allSettled([
+    getProfile(symbol),
+    getQuote(symbol),
+    getBasicFinancials(symbol),
+    getCandles(symbol, 90),
+    getCompanyNews(symbol),
+  ]);
+
+  const profile   = profileRes.status  === "fulfilled" ? profileRes.value         : null;
+  const quote     = quoteRes.status    === "fulfilled" ? quoteRes.value           : null;
+  const fin       = finRes.status      === "fulfilled" ? finRes.value             : null;
+  const candles   = candlesRes.status  === "fulfilled" ? candlesRes.value         : null;
+  const newsItems = newsRes.status     === "fulfilled" ? (newsRes.value ?? [])    : [];
+
+  const price     = quote?.c ?? 0;
+  const changePct = quote?.dp ?? 0;
+  const isUp      = changePct >= 0;
+
+  const chartData =
+    candles?.s === "ok" && candles.t?.length
+      ? candles.t.map((ts, i) => ({
+          date: new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          close: candles.c[i],
+          volume: candles.v[i],
+        }))
+      : [];
+
+  const metrics: [string, string][] = [
+    ["PREV CLOSE",  n(quote?.pc, 2, "$")],
+    ["OPEN",        n(quote?.o, 2, "$")],
+    ["DAY HIGH",    n(quote?.h, 2, "$")],
+    ["DAY LOW",     n(quote?.l, 2, "$")],
+    ["52W HIGH",    n(fin?.["52WeekHigh"], 2, "$")],
+    ["52W LOW",     n(fin?.["52WeekLow"], 2, "$")],
+    ["MKT CAP",     fmtCap(profile?.marketCapitalization)],
+    ["P/E",         n(fin?.peNormalizedAnnual, 1)],
+    ["EPS",         n(fin?.epsTTM, 2, "$")],
+    ["BETA",        n(fin?.beta, 2)],
+    ["DIV YIELD",   fin?.dividendYieldIndicatedAnnual ? `${n(fin.dividendYieldIndicatedAnnual, 2)}%` : "—"],
+  ];
+
+  const valid = price > 0;
+
   return (
-    <Panel title={`ETF · ${decodeURIComponent(ticker).toUpperCase()}`} meta="STUB">
-      <div className="text-muted text-[11px]">ETF council Phase 3.</div>
+    <Panel
+      title={`${symbol} · ETF`}
+      meta={profile?.name ?? (valid ? "EXCHANGE TRADED FUND" : "SYMBOL NOT FOUND")}
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between flex-wrap gap-4 mb-5">
+        <div>
+          {valid ? (
+            <>
+              <div className="text-[36px] font-bold tabular-nums text-amber leading-none">
+                ${price.toFixed(2)}
+              </div>
+              <div className={`text-[12px] mt-1.5 ${isUp ? "text-green" : "text-red"}`}>
+                {isUp ? "+" : ""}{changePct.toFixed(2)}%&nbsp;
+                <span className="text-muted">
+                  ({isUp ? "+" : ""}{(quote?.d ?? 0).toFixed(2)}) today
+                </span>
+              </div>
+            </>
+          ) : (
+            <div className="text-muted text-[12px] italic">no price data — check ticker</div>
+          )}
+          {profile?.exchange && (
+            <div className="text-dim text-[10px] mt-2 space-y-0.5">
+              <div className="uppercase">{profile.exchange} · {profile.finnhubIndustry}</div>
+            </div>
+          )}
+        </div>
+        <TickerSearch assetClass="etf" currentTicker={symbol} />
+      </div>
+
+      {/* Chart + Metrics */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-3 mb-3">
+        <div className="border border-border bg-grid p-3">
+          <div className="text-muted text-[10px] mb-2 uppercase tracking-[1px]">90-DAY PRICE · DAILY</div>
+          <PriceChart data={chartData} />
+        </div>
+        <div className="border border-border bg-grid p-3">
+          <div className="text-muted text-[10px] mb-2 uppercase tracking-[1px]">KEY METRICS</div>
+          <table className="w-full text-[11px]">
+            <tbody>
+              {metrics.map(([k, v]) => (
+                <tr key={k} className="dotted-row">
+                  <td className="py-0.5 text-muted pr-3 whitespace-nowrap">{k}</td>
+                  <td className="py-0.5 text-right text-amber tabular-nums">{v}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Council stub */}
+      <div className="border border-border bg-grid p-3 mb-3">
+        <div className="text-muted text-[10px] uppercase tracking-[1px] mb-2">
+          ◎ INVESTMENT COUNCIL — PHASE 3
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
+          {["TECHNICAL", "FUNDAMENTAL", "SENTIMENT", "MACRO"].map((agent) => (
+            <div key={agent} className="border border-border/40 p-2 text-dim">
+              <div className="text-muted mb-1">{agent}</div>
+              <div className="italic">awaiting phase 3…</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* News */}
+      {newsItems.length > 0 && (
+        <div className="border border-border bg-grid p-3">
+          <div className="text-muted text-[10px] mb-3 uppercase tracking-[1px]">
+            RECENT NEWS · {newsItems.length} ARTICLES
+          </div>
+          <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+            {newsItems.slice(0, 12).map((item, i) => (
+              <div key={i} className="dotted-row pb-2">
+                <a
+                  href={item.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-text hover:text-amber transition-colors block leading-tight"
+                >
+                  {item.headline}
+                </a>
+                <div className="text-[10px] text-dim mt-0.5">
+                  {item.source} ·{" "}
+                  {new Date(item.datetime * 1000).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </Panel>
   );
 }
