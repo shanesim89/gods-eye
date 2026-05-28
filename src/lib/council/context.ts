@@ -105,6 +105,7 @@ export async function buildContext(
       assetClass,
       price: quote?.c ?? 0,
       changePct: quote?.dp ?? 0,
+      currency: profile?.currency?.toUpperCase() || "USD",
       profile: profile
         ? {
             name: profile.name,
@@ -203,6 +204,7 @@ export async function buildContext(
       assetClass,
       price: md?.current_price?.usd ?? 0,
       changePct: md?.price_change_percentage_24h ?? 0,
+      currency: "USD",
       candles: cryptoCandles,
       cryptoMeta: coin
         ? {
@@ -248,6 +250,7 @@ export async function buildContext(
       assetClass,
       price: quote?.c ?? 0,
       changePct: quote?.dp ?? 0,
+      currency: "USD",
       financials: fin,
       candles:
         candles?.s === "ok" && candles.t?.length
@@ -264,5 +267,5 @@ export async function buildContext(
     };
   }
 
-  return { ticker: symbol, assetClass, price: 0, changePct: 0 };
+  return { ticker: symbol, assetClass, price: 0, changePct: 0, currency: "USD" };
 }

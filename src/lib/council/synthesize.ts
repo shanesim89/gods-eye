@@ -1,5 +1,6 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
+import { currencySymbol } from "@/lib/format";
 import type {
   AgentResult,
   CouncilContext,
@@ -85,30 +86,31 @@ function computeRefs(ctx: CouncilContext) {
   };
 }
 
-function fmtRef(v: number | null | undefined, dec = 2): string {
+function fmtRef(v: number | null | undefined, cur: string, dec = 2): string {
   if (v == null || !Number.isFinite(v)) return "n/a";
-  return `$${v.toFixed(dec)}`;
+  return `${cur}${v.toFixed(dec)}`;
 }
 
 function buildReferenceBlock(ctx: CouncilContext): string {
   const r = computeRefs(ctx);
   const isCrypto = ctx.assetClass === "crypto";
   const priceDec = ctx.price < 1 ? 4 : 2;
+  const cur = currencySymbol(ctx.currency);
 
   const lines = [
-    `Current: ${fmtRef(r.current, priceDec)}`,
-    `90d High / Low: ${fmtRef(r.high90d, priceDec)} / ${fmtRef(r.low90d, priceDec)}`,
+    `Current: ${fmtRef(r.current, cur, priceDec)}`,
+    `90d High / Low: ${fmtRef(r.high90d, cur, priceDec)} / ${fmtRef(r.low90d, cur, priceDec)}`,
   ];
   if (r.ma20 != null) {
     const side = r.current > r.ma20 ? "ABOVE" : "BELOW";
-    lines.push(`MA20: ${fmtRef(r.ma20, priceDec)} (price ${side})`);
+    lines.push(`MA20: ${fmtRef(r.ma20, cur, priceDec)} (price ${side})`);
   }
   if (r.ma50 != null) {
     const side = r.current > r.ma50 ? "ABOVE" : "BELOW";
-    lines.push(`MA50: ${fmtRef(r.ma50, priceDec)} (price ${side})`);
+    lines.push(`MA50: ${fmtRef(r.ma50, cur, priceDec)} (price ${side})`);
   }
   if (!isCrypto && (r.high52w != null || r.low52w != null)) {
-    lines.push(`52W High / Low: ${fmtRef(r.high52w, priceDec)} / ${fmtRef(r.low52w, priceDec)}`);
+    lines.push(`52W High / Low: ${fmtRef(r.high52w, cur, priceDec)} / ${fmtRef(r.low52w, cur, priceDec)}`);
   }
   return lines.join("\n");
 }
@@ -151,12 +153,14 @@ ${a.keyPoints.map((p) => `- ${p}`).join("\n")}`;
 
   const refBlock = buildReferenceBlock(ctx);
   const priceDec = ctx.price < 1 ? 4 : 2;
+  const cur = currencySymbol(ctx.currency);
 
   const systemPrompt = `You are the CHIEF INVESTMENT OFFICER of the Investment Council.
 You must synthesize the analyses from 4 specialist agents into a single BUY / HOLD / SELL verdict for ${ctx.ticker}.
 
 Asset class: ${ctx.assetClass.toUpperCase()}
-Current price: $${ctx.price.toFixed(priceDec)} (${ctx.changePct >= 0 ? "+" : ""}${ctx.changePct.toFixed(2)}% today)
+Currency: ${ctx.currency} (all prices and trade levels in ${ctx.currency} — do NOT convert)
+Current price: ${cur}${ctx.price.toFixed(priceDec)} (${ctx.changePct >= 0 ? "+" : ""}${ctx.changePct.toFixed(2)}% today)
 
 AGENT REPORTS:
 ${agentSummary}
@@ -244,6 +248,7 @@ Call emit_verdict with your synthesized judgment AND trade levels. Be decisive. 
         agents,
         generatedAt: new Date().toISOString(),
         tradeLevels,
+        currency: ctx.currency,
       };
     }
 
@@ -254,6 +259,7 @@ Call emit_verdict with your synthesized judgment AND trade levels. Be decisive. 
       agents,
       generatedAt: new Date().toISOString(),
       tradeLevels: null,
+      currency: ctx.currency,
     };
   } catch (err) {
     return {
@@ -263,6 +269,7 @@ Call emit_verdict with your synthesized judgment AND trade levels. Be decisive. 
       agents,
       generatedAt: new Date().toISOString(),
       tradeLevels: null,
+      currency: ctx.currency,
     };
   }
 }

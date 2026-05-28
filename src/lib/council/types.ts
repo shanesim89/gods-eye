@@ -28,6 +28,7 @@ export type Verdict = {
   agents: AgentResult[];
   generatedAt: string;
   tradeLevels?: TradeLevels | null; // null/undefined for legacy cached rows
+  currency?: string; // ISO code; legacy rows omit -> default USD
 };
 
 export type StreamEvent =
@@ -42,6 +43,7 @@ export type CouncilContext = {
   assetClass: AssetClass;
   price: number;
   changePct: number;
+  currency: string; // ISO code, e.g. "USD", "SGD"
   // Equity/ETF fields
   profile?: {
     name: string;

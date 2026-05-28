@@ -18,7 +18,7 @@ type DataPoint = {
 
 const mono = "JetBrains Mono, Consolas, monospace";
 
-export function PriceChart({ data }: { data: DataPoint[] }) {
+export function PriceChart({ data, currency = "$" }: { data: DataPoint[]; currency?: string }) {
   if (data.length === 0) return <div className="text-muted text-[10px] text-center py-8">no chart data</div>;
 
   const prices = data.map((d) => d.close);
@@ -53,7 +53,7 @@ export function PriceChart({ data }: { data: DataPoint[] }) {
           tick={{ fill: "#4b5563", fontSize: 9, fontFamily: mono }}
           tickLine={false}
           axisLine={false}
-          tickFormatter={(v: number) => `$${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(0)}`}
+          tickFormatter={(v: number) => `${currency}${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(0)}`}
           width={46}
         />
         <YAxis
@@ -78,7 +78,7 @@ export function PriceChart({ data }: { data: DataPoint[] }) {
           formatter={(v: any, name: any) => {
             const num = Number(v);
             if (name === "close")
-              return [`$${num.toFixed(2)}`, "CLOSE"];
+              return [`${currency}${num.toFixed(2)}`, "CLOSE"];
             if (name === "volume")
               return [
                 Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(num),

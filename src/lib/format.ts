@@ -1,3 +1,29 @@
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  USD: "$",
+  SGD: "S$",
+  HKD: "HK$",
+  AUD: "A$",
+  CAD: "C$",
+  NZD: "NZ$",
+  EUR: "€",
+  GBP: "£",
+  JPY: "¥",
+  CNY: "¥",
+  KRW: "₩",
+  INR: "₹",
+  MYR: "RM",
+  THB: "฿",
+  IDR: "Rp",
+  PHP: "₱",
+  TWD: "NT$",
+  CHF: "CHF ",
+};
+
+export function currencySymbol(code?: string | null): string {
+  if (!code) return "$";
+  return CURRENCY_SYMBOLS[code.toUpperCase()] ?? `${code.toUpperCase()} `;
+}
+
 export function fmtMoney(n: number, currency = "USD", maxFrac = 0): string {
   if (!Number.isFinite(n)) return "—";
   return new Intl.NumberFormat("en-US", {

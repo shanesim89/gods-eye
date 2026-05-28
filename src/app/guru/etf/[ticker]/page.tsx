@@ -1,6 +1,7 @@
 import { Panel } from "@/components/ui/Panel";
 import { CouncilCard } from "@/components/council/CouncilCard";
 import { requireUser } from "@/lib/auth";
+import { currencySymbol } from "@/lib/format";
 import {
   getProfile,
   getQuote,
@@ -19,11 +20,11 @@ function n(v: number | undefined | null, dec = 2, prefix = ""): string {
   return `${prefix}${v.toFixed(dec)}`;
 }
 
-function fmtCap(millionsUSD: number | undefined | null): string {
-  if (millionsUSD == null || millionsUSD === 0) return "—";
-  if (millionsUSD >= 1_000_000) return `$${(millionsUSD / 1_000_000).toFixed(2)}T`;
-  if (millionsUSD >= 1_000) return `$${(millionsUSD / 1_000).toFixed(2)}B`;
-  return `$${millionsUSD.toFixed(0)}M`;
+function fmtCap(millions: number | undefined | null, prefix = "$"): string {
+  if (millions == null || millions === 0) return "—";
+  if (millions >= 1_000_000) return `${prefix}${(millions / 1_000_000).toFixed(2)}T`;
+  if (millions >= 1_000) return `${prefix}${(millions / 1_000).toFixed(2)}B`;
+  return `${prefix}${millions.toFixed(0)}M`;
 }
 
 export default async function EtfPage({
@@ -52,6 +53,8 @@ export default async function EtfPage({
   const price     = quote?.c ?? 0;
   const changePct = quote?.dp ?? 0;
   const isUp      = changePct >= 0;
+  const ccy       = profile?.currency?.toUpperCase() || "USD";
+  const cur       = currencySymbol(ccy);
 
   const chartData =
     candles?.s === "ok" && candles.t?.length
@@ -63,15 +66,15 @@ export default async function EtfPage({
       : [];
 
   const metrics: [string, string][] = [
-    ["PREV CLOSE",  n(quote?.pc, 2, "$")],
-    ["OPEN",        n(quote?.o, 2, "$")],
-    ["DAY HIGH",    n(quote?.h, 2, "$")],
-    ["DAY LOW",     n(quote?.l, 2, "$")],
-    ["52W HIGH",    n(fin?.["52WeekHigh"], 2, "$")],
-    ["52W LOW",     n(fin?.["52WeekLow"], 2, "$")],
-    ["MKT CAP",     fmtCap(profile?.marketCapitalization)],
+    ["PREV CLOSE",  n(quote?.pc, 2, cur)],
+    ["OPEN",        n(quote?.o, 2, cur)],
+    ["DAY HIGH",    n(quote?.h, 2, cur)],
+    ["DAY LOW",     n(quote?.l, 2, cur)],
+    ["52W HIGH",    n(fin?.["52WeekHigh"], 2, cur)],
+    ["52W LOW",     n(fin?.["52WeekLow"], 2, cur)],
+    ["MKT CAP",     fmtCap(profile?.marketCapitalization, cur)],
     ["P/E",         n(fin?.peNormalizedAnnual, 1)],
-    ["EPS",         n(fin?.epsTTM, 2, "$")],
+    ["EPS",         n(fin?.epsTTM, 2, cur)],
     ["BETA",        n(fin?.beta, 2)],
     ["DIV YIELD",   fin?.dividendYieldIndicatedAnnual ? `${n(fin.dividendYieldIndicatedAnnual, 2)}%` : "—"],
   ];
@@ -89,7 +92,8 @@ export default async function EtfPage({
           {valid ? (
             <>
               <div className="text-[36px] font-bold tabular-nums text-amber leading-none">
-                ${price.toFixed(2)}
+                {cur}{price.toFixed(2)}
+                <span className="text-[12px] text-dim ml-2 font-normal">{ccy}</span>
               </div>
               <div className={`text-[12px] mt-1.5 ${isUp ? "text-green" : "text-red"}`}>
                 {isUp ? "+" : ""}{changePct.toFixed(2)}%&nbsp;
@@ -114,7 +118,7 @@ export default async function EtfPage({
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-3 mb-3">
         <div className="border border-border bg-grid p-3">
           <div className="text-muted text-[10px] mb-2 uppercase tracking-[1px]">90-DAY PRICE · DAILY</div>
-          <PriceChart data={chartData} />
+          <PriceChart data={chartData} currency={cur} />
         </div>
         <div className="border border-border bg-grid p-3">
           <div className="text-muted text-[10px] mb-2 uppercase tracking-[1px]">KEY METRICS</div>

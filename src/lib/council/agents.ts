@@ -1,5 +1,6 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
+import { currencySymbol } from "@/lib/format";
 import type { AssetClass, AgentResult, Signal, CouncilContext } from "./types";
 
 const HAIKU = "claude-haiku-4-5-20251001";
@@ -14,9 +15,10 @@ export function getRoles(assetClass: AssetClass): string[] {
 }
 
 function buildSystemPrompt(role: string, ctx: CouncilContext): string {
+  const cur = currencySymbol(ctx.currency);
   const base = `You are the ${role} ANALYST on the Investment Council.
 You are analyzing ${ctx.ticker} (${ctx.assetClass.toUpperCase()}).
-Current price: $${ctx.price.toFixed(2)} (${ctx.changePct >= 0 ? "+" : ""}${ctx.changePct.toFixed(2)}% today).
+Current price: ${cur}${ctx.price.toFixed(2)} ${ctx.currency} (${ctx.changePct >= 0 ? "+" : ""}${ctx.changePct.toFixed(2)}% today).
 `;
 
   const extras: string[] = [];
@@ -28,7 +30,7 @@ Current price: $${ctx.price.toFixed(2)} (${ctx.changePct >= 0 ? "+" : ""}${ctx.c
   if (ctx.financials && Object.keys(ctx.financials).length > 0) {
     const fin = ctx.financials;
     const f = (k: string) => fin[k] != null ? String(fin[k]) : "n/a";
-    extras.push(`Financials: P/E=${f("peNormalizedAnnual")} | EPS(TTM)=${f("epsTTM")} | Beta=${f("beta")} | ROE=${f("roeTTM")} | Profit Margin=${f("netProfitMarginTTM")} | Debt/Eq=${f("totalDebt_totalEquityQuarterly")} | 52W High=${f("52WeekHigh")} | 52W Low=${f("52WeekLow")}`);
+    extras.push(`Financials: P/E=${f("peNormalizedAnnual")} | EPS(TTM)=${f("epsTTM")} | Beta=${f("beta")} | ROE=${f("roeTTM")} | Profit Margin=${f("netProfitMarginTTM")} | Debt/Eq=${f("totalDebt_totalEquityQuarterly")} | 52W High=${cur}${f("52WeekHigh")} | 52W Low=${cur}${f("52WeekLow")}`);
   }
 
   if (ctx.candles) {
@@ -38,16 +40,16 @@ Current price: $${ctx.price.toFixed(2)} (${ctx.changePct >= 0 ? "+" : ""}${ctx.c
     const high = Math.max(...c);
     const low = Math.min(...c);
     const trendPct = first > 0 ? ((last - first) / first * 100).toFixed(1) : "n/a";
-    extras.push(`90-day price: Start=$${first.toFixed(2)}, Current=$${last.toFixed(2)}, High=$${high.toFixed(2)}, Low=$${low.toFixed(2)}, 90d trend=${trendPct}%`);
+    extras.push(`90-day price: Start=${cur}${first.toFixed(2)}, Current=${cur}${last.toFixed(2)}, High=${cur}${high.toFixed(2)}, Low=${cur}${low.toFixed(2)}, 90d trend=${trendPct}%`);
 
     // Simple MA
     if (c.length >= 20) {
       const ma20 = c.slice(-20).reduce((a, b) => a + b, 0) / 20;
-      extras.push(`MA20=$${ma20.toFixed(2)} (price ${last > ma20 ? "above" : "below"} MA20)`);
+      extras.push(`MA20=${cur}${ma20.toFixed(2)} (price ${last > ma20 ? "above" : "below"} MA20)`);
     }
     if (c.length >= 50) {
       const ma50 = c.slice(-50).reduce((a, b) => a + b, 0) / 50;
-      extras.push(`MA50=$${ma50.toFixed(2)} (price ${last > ma50 ? "above" : "below"} MA50)`);
+      extras.push(`MA50=${cur}${ma50.toFixed(2)} (price ${last > ma50 ? "above" : "below"} MA50)`);
     }
   }
 
@@ -67,7 +69,7 @@ Current price: $${ctx.price.toFixed(2)} (${ctx.changePct >= 0 ? "+" : ""}${ctx.c
 
   if (ctx.optionsMeta) {
     const o = ctx.optionsMeta;
-    extras.push(`Option: ${o.optionType} ${o.strike} exp ${o.expiry} on ${o.underlying} (underlying price $${o.underlyingPrice.toFixed(2)})`);
+    extras.push(`Option: ${o.optionType} ${o.strike} exp ${o.expiry} on ${o.underlying} (underlying price ${cur}${o.underlyingPrice.toFixed(2)})`);
   }
 
   if (ctx.lunarcrush) {

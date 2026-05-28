@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { AgentPanel } from "./AgentPanel";
+import { currencySymbol } from "@/lib/format";
 import type {
   AgentResult,
   AssetClass,
@@ -275,7 +276,11 @@ export function CouncilCard({ ticker, assetClass }: Props) {
 
       {/* Trade Levels sub-card */}
       {verdict && verdict.tradeLevels && (
-        <TradeLevelsCard verdict={verdict.verdict} levels={verdict.tradeLevels} />
+        <TradeLevelsCard
+          verdict={verdict.verdict}
+          levels={verdict.tradeLevels}
+          currency={currencySymbol(verdict.currency)}
+        />
       )}
 
       {/* Footer: button + debate toggle */}
@@ -328,19 +333,21 @@ export function CouncilCard({ ticker, assetClass }: Props) {
   );
 }
 
-function fmtPrice(v: number | undefined | null): string {
+function fmtPrice(v: number | undefined | null, cur = "$"): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  if (v < 1) return `$${v.toPrecision(4)}`;
-  if (v >= 1000) return `$${v.toFixed(0)}`;
-  return `$${v.toFixed(2)}`;
+  if (v < 1) return `${cur}${v.toPrecision(4)}`;
+  if (v >= 1000) return `${cur}${v.toFixed(0)}`;
+  return `${cur}${v.toFixed(2)}`;
 }
 
 function TradeLevelsCard({
   verdict,
   levels,
+  currency = "$",
 }: {
   verdict: VerdictType;
   levels: TradeLevels;
+  currency?: string;
 }) {
   const isHold = verdict === "HOLD";
   const accent =
@@ -371,7 +378,7 @@ function TradeLevelsCard({
                     Re-eval BUY
                   </td>
                   <td className="py-0.5 text-right text-green">
-                    below {fmtPrice(levels.buyTrigger)}
+                    below {fmtPrice(levels.buyTrigger, currency)}
                   </td>
                 </tr>
               )}
@@ -381,7 +388,7 @@ function TradeLevelsCard({
                     Re-eval SELL
                   </td>
                   <td className="py-0.5 text-right text-red">
-                    above {fmtPrice(levels.sellTrigger)}
+                    above {fmtPrice(levels.sellTrigger, currency)}
                   </td>
                 </tr>
               )}
@@ -390,7 +397,7 @@ function TradeLevelsCard({
                   Neutral range
                 </td>
                 <td className="py-0.5 text-right text-amber">
-                  {fmtPrice(levels.entry.low)} — {fmtPrice(levels.entry.high)}
+                  {fmtPrice(levels.entry.low, currency)} — {fmtPrice(levels.entry.high, currency)}
                 </td>
               </tr>
               <tr className="dotted-row">
@@ -398,7 +405,7 @@ function TradeLevelsCard({
                   Hard stop
                 </td>
                 <td className="py-0.5 text-right text-dim">
-                  {fmtPrice(levels.stopLoss)}
+                  {fmtPrice(levels.stopLoss, currency)}
                 </td>
               </tr>
             </>
@@ -409,7 +416,7 @@ function TradeLevelsCard({
                   Entry
                 </td>
                 <td className="py-0.5 text-right text-amber font-bold">
-                  {fmtPrice(levels.entry.low)} — {fmtPrice(levels.entry.high)}
+                  {fmtPrice(levels.entry.low, currency)} — {fmtPrice(levels.entry.high, currency)}
                 </td>
               </tr>
               <tr className="dotted-row">
@@ -417,7 +424,7 @@ function TradeLevelsCard({
                   Target
                 </td>
                 <td className="py-0.5 text-right text-green font-bold">
-                  {fmtPrice(levels.target.low)} — {fmtPrice(levels.target.high)}
+                  {fmtPrice(levels.target.low, currency)} — {fmtPrice(levels.target.high, currency)}
                 </td>
               </tr>
               <tr className="dotted-row">
@@ -425,7 +432,7 @@ function TradeLevelsCard({
                   Stop loss
                 </td>
                 <td className="py-0.5 text-right text-red font-bold">
-                  {fmtPrice(levels.stopLoss)}
+                  {fmtPrice(levels.stopLoss, currency)}
                 </td>
               </tr>
             </>
