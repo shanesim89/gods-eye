@@ -7,6 +7,7 @@ import {
   assets,
   subscriptions,
   fixed_expenses,
+  insurance_policies,
   liabilities,
   income_sources,
   investment_commitments,
@@ -42,13 +43,14 @@ export default async function MoneyMapPage() {
     })
     .catch(() => {});
 
-  const [assetRows, subRows, fxRows, liaRows, incRows, icRows] = await Promise.all([
+  const [assetRows, subRows, fxRows, liaRows, incRows, icRows, insRows] = await Promise.all([
     db.select().from(assets).where(eq(assets.user_id, user.id)),
     db.select().from(subscriptions).where(eq(subscriptions.user_id, user.id)),
     db.select().from(fixed_expenses).where(eq(fixed_expenses.user_id, user.id)),
     db.select().from(liabilities).where(eq(liabilities.user_id, user.id)),
     db.select().from(income_sources).where(eq(income_sources.user_id, user.id)),
     db.select().from(investment_commitments).where(eq(investment_commitments.user_id, user.id)),
+    db.select().from(insurance_policies).where(eq(insurance_policies.user_id, user.id)),
   ]);
 
   // ASSET totals (prefer current_value if set, fallback cost_basis)
@@ -78,6 +80,8 @@ export default async function MoneyMapPage() {
   for (const s of subRows) monthlySubs += await convert(toMonthly(Number(s.amount), s.cycle), s.currency, base);
   let monthlyFx = 0;
   for (const f of fxRows) monthlyFx += await convert(toMonthly(Number(f.amount), f.cycle), f.currency, base);
+  let monthlyIns = 0;
+  for (const p of insRows) monthlyIns += await convert(toMonthly(Number(p.amount), p.cycle), p.currency, base);
   let monthlyDca = 0;
   for (const c of icRows) monthlyDca += await convert(toMonthly(Number(c.target_amount), c.cycle), c.currency, base);
   // Loan payments
@@ -86,7 +90,7 @@ export default async function MoneyMapPage() {
     if (l.monthly_payment !== null) monthlyLoan += await convert(Number(l.monthly_payment), l.currency, base);
   }
 
-  const monthlyOutflow = monthlySubs + monthlyFx + monthlyDca + monthlyLoan;
+  const monthlyOutflow = monthlySubs + monthlyFx + monthlyIns + monthlyDca + monthlyLoan;
   const monthlyFree = monthlyIncome - monthlyOutflow;
   const savingsRate = monthlyIncome > 0 ? (monthlyFree / monthlyIncome) * 100 : 0;
 
@@ -155,6 +159,7 @@ export default async function MoneyMapPage() {
   const flowOutflows = [
     { label: "FIXED", value: fmtMoney(monthlyFx, base, 0), color: "#ff3b3b", align: "right" as const },
     { label: "SUBS", value: fmtMoney(monthlySubs, base, 0), color: "#ffb000", align: "right" as const },
+    { label: "INSURE", value: fmtMoney(monthlyIns, base, 0), color: "#b066ff", align: "right" as const },
     { label: "DCA", value: fmtMoney(monthlyDca, base, 0), color: "#00e5ff", align: "right" as const },
     { label: "LOAN", value: fmtMoney(monthlyLoan, base, 0), color: "#ff3b3b", align: "right" as const },
     { label: "FREE", value: fmtMoney(Math.max(0, monthlyFree), base, 0), color: "#00ff7f", align: "right" as const },
@@ -219,7 +224,7 @@ export default async function MoneyMapPage() {
           <div className="p-4">
             <div className="text-[9px] tracking-[1.5px] uppercase text-muted">MO BURN</div>
             <div className="text-xl md:text-2xl font-bold tabular-nums text-red">{fmtMoney(monthlyOutflow, base, 0)}</div>
-            <div className="text-[10px] mt-1 text-muted">{subRows.length} subs · {fxRows.length} fixed · {icRows.length} dca</div>
+            <div className="text-[10px] mt-1 text-muted">{subRows.length} subs · {fxRows.length} fixed · {insRows.length} ins · {icRows.length} dca</div>
           </div>
         </div>
 

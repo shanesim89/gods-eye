@@ -9,6 +9,7 @@
   --green: #00ff7f;
   --red: #ff3b3b;
   --cyan: #00e5ff;
+  --purple: #b066ff;
   --text: #d4d4d4;
   --muted: #6b6b6b;
   --dim: #3a3a3a;
@@ -23,6 +24,7 @@
   --color-green: var(--green);
   --color-red: var(--red);
   --color-cyan: var(--cyan);
+  --color-purple: var(--purple);
   --color-text: var(--text);
   --color-muted: var(--muted);
   --color-dim: var(--dim);

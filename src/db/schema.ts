@@ -76,6 +76,17 @@ export const fixed_expenses = pgTable("fixed_expenses", {
   updated_at: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const insurance_policies = pgTable("insurance_policies", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  user_id: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  name: text("name").notNull(),
+  amount: numeric("amount", { precision: 18, scale: 2 }).notNull(),
+  currency: text("currency").notNull(),
+  cycle: text("cycle").notNull(),
+  for_who: text("for_who").notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const income_sources = pgTable("income_sources", {
   id: uuid("id").defaultRandom().primaryKey(),
   user_id: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),

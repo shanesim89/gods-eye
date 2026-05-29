@@ -4,6 +4,7 @@ import { useTransition } from "react";
 export const CYCLES = ["monthly", "yearly", "weekly", "quarterly", "daily"] as const;
 export const CURRENCIES = ["SGD", "USD", "EUR", "GBP", "JPY", "CNY", "AUD", "MYR", "HKD"] as const;
 export const INCOME_TYPES = ["salary", "dividend", "interest", "rental", "side", "other"] as const;
+export const FOR_WHO = ["self", "spouse", "child", "parent", "joint", "other"] as const;
 
 const baseInput =
   "bg-grid border border-border px-2 py-1 text-text placeholder:text-dim";
