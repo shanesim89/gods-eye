@@ -5,8 +5,43 @@ import {
   getBasicFinancials,
   getCompanyNews,
 } from "@/lib/finnhub";
-import { getYahooData } from "@/lib/yahoo";
+import { getYahooData, getYahooSummary, type YahooSummary } from "@/lib/yahoo";
 import type { AssetClass, CouncilContext } from "./types";
+
+function buildAnalystBlock(
+  s: YahooSummary | null,
+  price: number
+): CouncilContext["analyst"] {
+  if (!s) return null;
+  const hasTarget = s.targetMeanPrice != null;
+  const hasRating = s.recommendationKey != null || s.numberOfAnalystOpinions != null;
+  if (!hasTarget && !hasRating && !s.sector && !s.industry) return null;
+  const upside =
+    hasTarget && price > 0 && s.targetMeanPrice != null
+      ? ((s.targetMeanPrice - price) / price) * 100
+      : null;
+  const latest = s.recommendationTrend?.[0] ?? null;
+  return {
+    targetMean: s.targetMeanPrice,
+    targetHigh: s.targetHighPrice,
+    targetLow: s.targetLowPrice,
+    upsidePct: upside,
+    rating: s.recommendationKey,
+    ratingMean: s.recommendationMean,
+    ratingCount: s.numberOfAnalystOpinions,
+    sector: s.sector,
+    industry: s.industry,
+    trend: latest
+      ? {
+          strongBuy: latest.strongBuy,
+          buy: latest.buy,
+          hold: latest.hold,
+          sell: latest.sell,
+          strongSell: latest.strongSell,
+        }
+      : null,
+  };
+}
 
 const COINGECKO_KEY = process.env.COINGECKO_API_KEY;
 const CG_BASE = "https://api.coingecko.com/api/v3";
@@ -83,12 +118,13 @@ export async function buildContext(
   const symbol = ticker.toUpperCase();
 
   if (assetClass === "stocks" || assetClass === "etf") {
-    const [profileRes, quoteRes, finRes, yahooRes, newsRes, lc] =
+    const [profileRes, quoteRes, finRes, yahooRes, summaryRes, newsRes, lc] =
       await Promise.allSettled([
         getProfile(symbol),
         getQuote(symbol),
         getBasicFinancials(symbol),
         getYahooData(symbol, 90),
+        getYahooSummary(symbol),
         getCompanyNews(symbol),
         fetchLunarCrush(assetClass, symbol),
       ]);
@@ -97,6 +133,7 @@ export async function buildContext(
     const quote   = quoteRes.status   === "fulfilled" ? quoteRes.value   : null;
     const finRaw  = finRes.status     === "fulfilled" ? finRes.value     : null;
     const yahoo   = yahooRes.status   === "fulfilled" ? yahooRes.value   : null;
+    const summary = summaryRes.status === "fulfilled" ? summaryRes.value : null;
     const candles = yahoo?.candles ?? null;
     const news    = newsRes.status    === "fulfilled" ? newsRes.value    : null;
     const lcData  = lc.status         === "fulfilled" ? lc.value         : null;
@@ -143,6 +180,7 @@ export async function buildContext(
         source: n.source,
         datetime: n.datetime,
       })) ?? null,
+      analyst: buildAnalystBlock(summary, quote?.c || yahoo?.price || 0),
       lunarcrush: lcData,
     };
   }
@@ -246,15 +284,17 @@ export async function buildContext(
     const expiry = `20${raw.slice(0, 2)}-${raw.slice(2, 4)}-${raw.slice(4, 6)}`;
     const optionType = match[3] === "C" ? "CALL" : "PUT";
     const strike = `$${match[4]}`;
-    const [quoteRes, finRes, yahooRes, lcRes] = await Promise.allSettled([
+    const [quoteRes, finRes, yahooRes, summaryRes, lcRes] = await Promise.allSettled([
       getQuote(underlying),
       getBasicFinancials(underlying),
       getYahooData(underlying, 90),
+      getYahooSummary(underlying),
       fetchLunarCrush("stocks", underlying),
     ]);
     const quote   = quoteRes.status   === "fulfilled" ? quoteRes.value   : null;
     const finRaw  = finRes.status     === "fulfilled" ? finRes.value     : null;
     const yahoo   = yahooRes.status   === "fulfilled" ? yahooRes.value   : null;
+    const summary = summaryRes.status === "fulfilled" ? summaryRes.value : null;
     const candles = yahoo?.candles ?? null;
     const lcData  = lcRes.status      === "fulfilled" ? lcRes.value      : null;
     const underlyingPrice = quote?.c || yahoo?.price || 0;
@@ -285,6 +325,7 @@ export async function buildContext(
             }
           : null,
       optionsMeta,
+      analyst: buildAnalystBlock(summary, underlyingPrice),
       lunarcrush: lcData,
     };
   }

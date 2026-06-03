@@ -8,7 +8,8 @@ import {
   getBasicFinancials,
   getCompanyNews,
 } from "@/lib/finnhub";
-import { getYahooData } from "@/lib/yahoo";
+import { getYahooData, getYahooSummary } from "@/lib/yahoo";
+import { AnalystCard } from "../../_components/AnalystCard";
 import { PriceChart } from "./PriceChart";
 import { TickerSearch } from "../../_components/TickerSearch";
 
@@ -35,11 +36,12 @@ export default async function StockPage({
   const { ticker } = await params;
   const symbol = ticker.toUpperCase();
 
-  const [profileRes, quoteRes, finRes, yahooRes, newsRes] = await Promise.allSettled([
+  const [profileRes, quoteRes, finRes, yahooRes, summaryRes, newsRes] = await Promise.allSettled([
     getProfile(symbol),
     getQuote(symbol),
     getBasicFinancials(symbol),
     getYahooData(symbol, 90),
+    getYahooSummary(symbol),
     getCompanyNews(symbol),
   ]);
 
@@ -47,6 +49,7 @@ export default async function StockPage({
   const quote     = quoteRes.status    === "fulfilled" ? quoteRes.value           : null;
   const fin       = finRes.status      === "fulfilled" ? finRes.value             : null;
   const yahoo     = yahooRes.status    === "fulfilled" ? yahooRes.value           : null;
+  const summary   = summaryRes.status  === "fulfilled" ? summaryRes.value         : null;
   const candles   = yahoo?.candles ?? null;
   const newsItems = newsRes.status     === "fulfilled" ? (newsRes.value ?? [])    : [];
 
@@ -118,6 +121,11 @@ export default async function StockPage({
           ) : (
             <div className="text-muted text-[12px] italic">no price data — check ticker</div>
           )}
+          {(summary?.sector || summary?.industry) && (
+            <div className="text-dim text-[10px] mt-2 uppercase tracking-[0.5px]">
+              {[summary.sector, summary.industry].filter(Boolean).join(" · ")}
+            </div>
+          )}
           {profile?.exchange && (
             <div className="text-dim text-[10px] mt-2 space-y-0.5">
               <div className="uppercase">{profile.exchange} · {profile.finnhubIndustry}</div>
@@ -163,6 +171,9 @@ export default async function StockPage({
           </table>
         </div>
       </div>
+
+      {/* Analyst consensus */}
+      <AnalystCard summary={summary} price={price} currency={ccy} currencySymbol={cur} />
 
       {/* Investment Council */}
       <div className="mb-3">

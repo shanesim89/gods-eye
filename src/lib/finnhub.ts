@@ -110,8 +110,13 @@ export async function getQuote(symbol: string): Promise<StockQuote | null> {
 export async function getBasicFinancials(symbol: string): Promise<BasicMetrics | null> {
   type Raw = { metric?: BasicMetrics };
   return cached(`fh-fin:${symbol}`, TTL_24HR, async () => {
+    // 1) Try Finnhub if a key is configured (paid tier still serves this).
     const r = await get<Raw>(`/stock/basic-financials?symbol=${encodeURIComponent(symbol)}&metric=all`);
-    return r?.metric ?? null;
+    if (r?.metric && Object.keys(r.metric).length > 0) return r.metric;
+    // 2) Fall back to keyless Yahoo quoteSummary mapped to the Finnhub field names.
+    const { getYahooSummary, getYahooData, mergeYahooSummaryAsFinancials } = await import("./yahoo");
+    const [sum, yd] = await Promise.all([getYahooSummary(symbol), getYahooData(symbol, 90)]);
+    return mergeYahooSummaryAsFinancials(sum, yd);
   });
 }
 

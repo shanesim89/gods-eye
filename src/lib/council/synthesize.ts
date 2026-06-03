@@ -115,6 +115,64 @@ function buildReferenceBlock(ctx: CouncilContext): string {
   return lines.join("\n");
 }
 
+function fmtPct(v: number | null | undefined, dec = 1): string {
+  if (v == null || !Number.isFinite(v)) return "n/a";
+  return `${v.toFixed(dec)}%`;
+}
+
+function fmtNum(v: number | null | undefined, dec = 2): string {
+  if (v == null || !Number.isFinite(v)) return "n/a";
+  return v.toFixed(dec);
+}
+
+function buildFundamentalsBlock(ctx: CouncilContext): string | null {
+  const f = ctx.financials;
+  if (!f) return null;
+  const pe = f.peNormalizedAnnual;
+  const eps = f.epsTTM;
+  const beta = f.beta;
+  const roe = f.roeTTM;
+  const margin = f.netProfitMarginTTM;
+  const de = f.totalDebt_totalEquityQuarterly;
+  const dy = f.dividendYieldIndicatedAnnual;
+  const hasAny = [pe, eps, beta, roe, margin, de, dy].some((v) => v != null);
+  if (!hasAny) return null;
+  return [
+    "FUNDAMENTALS",
+    `P/E (TTM): ${fmtNum(pe, 1)} | EPS (TTM): ${fmtNum(eps, 2)} | Beta: ${fmtNum(beta, 2)}`,
+    `ROE: ${fmtPct(roe)} | Profit margin: ${fmtPct(margin)} | Debt/Equity: ${fmtNum(de, 2)} | Div yield: ${fmtPct(dy, 2)}`,
+  ].join("\n");
+}
+
+function buildAnalystSynthBlock(ctx: CouncilContext): string | null {
+  const a = ctx.analyst;
+  if (!a) return null;
+  const cur = currencySymbol(ctx.currency);
+  const priceDec = ctx.price < 1 ? 4 : 2;
+  const hasTarget = a.targetMean != null;
+  const hasRating = a.rating != null || a.ratingCount != null;
+  if (!hasTarget && !hasRating) return null;
+  const lines: string[] = [`ANALYST CONSENSUS (${a.ratingCount ?? "?"} analysts)`];
+  if (hasTarget) {
+    lines.push(
+      `Target low / mean / high: ${fmtRef(a.targetLow, cur, priceDec)} / ${fmtRef(a.targetMean, cur, priceDec)} / ${fmtRef(a.targetHigh, cur, priceDec)}`
+    );
+    lines.push(`Implied upside (mean vs current): ${fmtPct(a.upsidePct, 1)}`);
+  }
+  if (hasRating) {
+    const rk = (a.rating ?? "n/a").toUpperCase();
+    const t = a.trend;
+    const trendStr = t
+      ? ` (strongBuy ${t.strongBuy} / buy ${t.buy} / hold ${t.hold} / sell ${t.sell} / strongSell ${t.strongSell})`
+      : "";
+    lines.push(`Rating: ${rk} [mean ${fmtNum(a.ratingMean, 2)}]${trendStr}`);
+  }
+  if (a.sector || a.industry) {
+    lines.push(`Sector / Industry: ${a.sector ?? "n/a"} / ${a.industry ?? "n/a"}`);
+  }
+  return lines.join("\n");
+}
+
 function validateLevels(verdict: VerdictType, t: TradeLevels | undefined | null): TradeLevels | null {
   if (!t) return null;
   if (!t.entry || !t.target) return null;
@@ -152,8 +210,11 @@ ${a.keyPoints.map((p) => `- ${p}`).join("\n")}`;
     .join("\n\n");
 
   const refBlock = buildReferenceBlock(ctx);
+  const fundBlock = buildFundamentalsBlock(ctx);
+  const analystBlock = buildAnalystSynthBlock(ctx);
   const priceDec = ctx.price < 1 ? 4 : 2;
   const cur = currencySymbol(ctx.currency);
+  const extraContext = [fundBlock, analystBlock].filter(Boolean).join("\n\n");
 
   const systemPrompt = `You are the CHIEF INVESTMENT OFFICER of the Investment Council.
 You must synthesize the analyses from 4 specialist agents into a single BUY / HOLD / SELL verdict for ${ctx.ticker}.
@@ -178,7 +239,7 @@ VERDICTS:
 
 REFERENCE LEVELS (use these to ground your trade levels — do NOT invent prices):
 ${refBlock}
-
+${extraContext ? `\n${extraContext}\n\nWeigh fundamentals against price action. If the analyst mean target diverges from your trade levels by more than 20%, address the divergence explicitly in your summary.\n` : ""}
 TRADE LEVEL RULES:
 - BUY: entry near current or pullback to MA20/MA50; target = next resistance (90d high, 52W high); stop below recent swing low (10–15% below entry low)
 - SELL: entry near current or rally to MA20/MA50; target = next support (90d low, 52W low); stop above recent swing high

@@ -8,7 +8,8 @@ import {
   getBasicFinancials,
   getCompanyNews,
 } from "@/lib/finnhub";
-import { getYahooData } from "@/lib/yahoo";
+import { getYahooData, getYahooSummary } from "@/lib/yahoo";
+import { AnalystCard } from "../../_components/AnalystCard";
 // Reuse stock chart — same data shape
 import { PriceChart } from "../../stocks/[ticker]/PriceChart";
 import { TickerSearch } from "../../_components/TickerSearch";
@@ -36,11 +37,12 @@ export default async function EtfPage({
   const { ticker } = await params;
   const symbol = ticker.toUpperCase();
 
-  const [profileRes, quoteRes, finRes, yahooRes, newsRes] = await Promise.allSettled([
+  const [profileRes, quoteRes, finRes, yahooRes, summaryRes, newsRes] = await Promise.allSettled([
     getProfile(symbol),
     getQuote(symbol),
     getBasicFinancials(symbol),
     getYahooData(symbol, 90),
+    getYahooSummary(symbol),
     getCompanyNews(symbol),
   ]);
 
@@ -48,6 +50,7 @@ export default async function EtfPage({
   const quote     = quoteRes.status    === "fulfilled" ? quoteRes.value           : null;
   const fin       = finRes.status      === "fulfilled" ? finRes.value             : null;
   const yahoo     = yahooRes.status    === "fulfilled" ? yahooRes.value           : null;
+  const summary   = summaryRes.status  === "fulfilled" ? summaryRes.value         : null;
   const candles   = yahoo?.candles ?? null;
   const newsItems = newsRes.status     === "fulfilled" ? (newsRes.value ?? [])    : [];
 
@@ -147,6 +150,9 @@ export default async function EtfPage({
           </table>
         </div>
       </div>
+
+      {/* Analyst consensus (hidden if no coverage — typical for ETFs) */}
+      <AnalystCard summary={summary} price={price} currency={ccy} currencySymbol={cur} />
 
       {/* Investment Council */}
       <div className="mb-3">

@@ -75,6 +75,19 @@ export type CouncilContext = {
     expiry: string;
     underlyingPrice: number;
   } | null;
+  // Analyst consensus (stocks/etf via Yahoo quoteSummary)
+  analyst?: {
+    targetMean: number | null;
+    targetHigh: number | null;
+    targetLow: number | null;
+    upsidePct: number | null;
+    rating: string | null;             // "buy" | "hold" | ...
+    ratingMean: number | null;          // 1=Strong Buy ... 5=Sell
+    ratingCount: number | null;
+    sector: string | null;
+    industry: string | null;
+    trend: { strongBuy: number; buy: number; hold: number; sell: number; strongSell: number } | null;
+  } | null;
   // LunarCrush sentiment (all classes)
   lunarcrush?: {
     galaxyScore: number | null;
