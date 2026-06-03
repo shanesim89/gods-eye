@@ -92,7 +92,6 @@ export type NewsItem = {
 
 const TTL_1MIN  = 60 * 1000;
 const TTL_1HR   = 60 * 60 * 1000;
-const TTL_15MIN = 15 * 60 * 1000;
 const TTL_30MIN = 30 * 60 * 1000;
 const TTL_24HR  = 24 * 60 * 60 * 1000;
 
@@ -117,11 +116,9 @@ export async function getBasicFinancials(symbol: string): Promise<BasicMetrics |
 }
 
 export async function getCandles(symbol: string, days = 90): Promise<StockCandles | null> {
-  const to = Math.floor(Date.now() / 1000);
-  const from = to - days * 86400;
-  return cached(`fh-candles:${symbol}:${days}`, TTL_15MIN, () =>
-    get<StockCandles>(`/stock/candle?symbol=${encodeURIComponent(symbol)}&resolution=D&from=${from}&to=${to}`)
-  );
+  // Finnhub free tier gates /stock/candle (403). Source daily candles from Yahoo (keyless).
+  const { getYahooCandles } = await import("./yahoo");
+  return getYahooCandles(symbol, days);
 }
 
 export async function getCompanyNews(symbol: string): Promise<NewsItem[] | null> {

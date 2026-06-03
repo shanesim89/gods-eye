@@ -3,9 +3,9 @@ import {
   getProfile,
   getQuote,
   getBasicFinancials,
-  getCandles,
   getCompanyNews,
 } from "@/lib/finnhub";
+import { getYahooData } from "@/lib/yahoo";
 import type { AssetClass, CouncilContext } from "./types";
 
 const COINGECKO_KEY = process.env.COINGECKO_API_KEY;
@@ -83,29 +83,41 @@ export async function buildContext(
   const symbol = ticker.toUpperCase();
 
   if (assetClass === "stocks" || assetClass === "etf") {
-    const [profileRes, quoteRes, finRes, candlesRes, newsRes, lc] =
+    const [profileRes, quoteRes, finRes, yahooRes, newsRes, lc] =
       await Promise.allSettled([
         getProfile(symbol),
         getQuote(symbol),
         getBasicFinancials(symbol),
-        getCandles(symbol, 90),
+        getYahooData(symbol, 90),
         getCompanyNews(symbol),
         fetchLunarCrush(assetClass, symbol),
       ]);
 
     const profile = profileRes.status === "fulfilled" ? profileRes.value : null;
     const quote   = quoteRes.status   === "fulfilled" ? quoteRes.value   : null;
-    const fin     = finRes.status     === "fulfilled" ? finRes.value     : null;
-    const candles = candlesRes.status === "fulfilled" ? candlesRes.value : null;
+    const finRaw  = finRes.status     === "fulfilled" ? finRes.value     : null;
+    const yahoo   = yahooRes.status   === "fulfilled" ? yahooRes.value   : null;
+    const candles = yahoo?.candles ?? null;
     const news    = newsRes.status    === "fulfilled" ? newsRes.value    : null;
     const lcData  = lc.status         === "fulfilled" ? lc.value         : null;
+
+    // Finnhub free tier no longer serves basic-financials; backfill 52w from Yahoo
+    // so the synthesizer's computeRefs has real anchors.
+    const fin: Record<string, number | undefined> | null =
+      finRaw || yahoo?.week52High != null || yahoo?.week52Low != null
+        ? {
+            ...(finRaw ?? {}),
+            "52WeekHigh": finRaw?.["52WeekHigh"] ?? yahoo?.week52High ?? undefined,
+            "52WeekLow":  finRaw?.["52WeekLow"]  ?? yahoo?.week52Low  ?? undefined,
+          }
+        : null;
 
     return {
       ticker: symbol,
       assetClass,
-      price: quote?.c ?? 0,
-      changePct: quote?.dp ?? 0,
-      currency: profile?.currency?.toUpperCase() || "USD",
+      price: quote?.c || yahoo?.price || 0,
+      changePct: quote?.dp ?? yahoo?.changePct ?? 0,
+      currency: (profile?.currency || yahoo?.currency || "USD").toUpperCase(),
       profile: profile
         ? {
             name: profile.name,
@@ -234,23 +246,33 @@ export async function buildContext(
     const expiry = `20${raw.slice(0, 2)}-${raw.slice(2, 4)}-${raw.slice(4, 6)}`;
     const optionType = match[3] === "C" ? "CALL" : "PUT";
     const strike = `$${match[4]}`;
-    const [quoteRes, finRes, candlesRes, lcRes] = await Promise.allSettled([
+    const [quoteRes, finRes, yahooRes, lcRes] = await Promise.allSettled([
       getQuote(underlying),
       getBasicFinancials(underlying),
-      getCandles(underlying, 90),
+      getYahooData(underlying, 90),
       fetchLunarCrush("stocks", underlying),
     ]);
     const quote   = quoteRes.status   === "fulfilled" ? quoteRes.value   : null;
-    const fin     = finRes.status     === "fulfilled" ? finRes.value     : null;
-    const candles = candlesRes.status === "fulfilled" ? candlesRes.value : null;
+    const finRaw  = finRes.status     === "fulfilled" ? finRes.value     : null;
+    const yahoo   = yahooRes.status   === "fulfilled" ? yahooRes.value   : null;
+    const candles = yahoo?.candles ?? null;
     const lcData  = lcRes.status      === "fulfilled" ? lcRes.value      : null;
-    optionsMeta = { underlying, optionType, strike, expiry, underlyingPrice: quote?.c ?? 0 };
+    const underlyingPrice = quote?.c || yahoo?.price || 0;
+    const fin: Record<string, number | undefined> | null =
+      finRaw || yahoo?.week52High != null || yahoo?.week52Low != null
+        ? {
+            ...(finRaw ?? {}),
+            "52WeekHigh": finRaw?.["52WeekHigh"] ?? yahoo?.week52High ?? undefined,
+            "52WeekLow":  finRaw?.["52WeekLow"]  ?? yahoo?.week52Low  ?? undefined,
+          }
+        : null;
+    optionsMeta = { underlying, optionType, strike, expiry, underlyingPrice };
     return {
       ticker: symbol,
       assetClass,
-      price: quote?.c ?? 0,
-      changePct: quote?.dp ?? 0,
-      currency: "USD",
+      price: underlyingPrice,
+      changePct: quote?.dp ?? yahoo?.changePct ?? 0,
+      currency: (yahoo?.currency || "USD").toUpperCase(),
       financials: fin,
       candles:
         candles?.s === "ok" && candles.t?.length

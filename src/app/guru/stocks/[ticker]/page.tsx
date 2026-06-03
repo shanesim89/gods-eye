@@ -6,9 +6,9 @@ import {
   getProfile,
   getQuote,
   getBasicFinancials,
-  getCandles,
   getCompanyNews,
 } from "@/lib/finnhub";
+import { getYahooData } from "@/lib/yahoo";
 import { PriceChart } from "./PriceChart";
 import { TickerSearch } from "../../_components/TickerSearch";
 
@@ -35,25 +35,36 @@ export default async function StockPage({
   const { ticker } = await params;
   const symbol = ticker.toUpperCase();
 
-  const [profileRes, quoteRes, finRes, candlesRes, newsRes] = await Promise.allSettled([
+  const [profileRes, quoteRes, finRes, yahooRes, newsRes] = await Promise.allSettled([
     getProfile(symbol),
     getQuote(symbol),
     getBasicFinancials(symbol),
-    getCandles(symbol, 90),
+    getYahooData(symbol, 90),
     getCompanyNews(symbol),
   ]);
 
   const profile   = profileRes.status  === "fulfilled" ? profileRes.value         : null;
   const quote     = quoteRes.status    === "fulfilled" ? quoteRes.value           : null;
   const fin       = finRes.status      === "fulfilled" ? finRes.value             : null;
-  const candles   = candlesRes.status  === "fulfilled" ? candlesRes.value         : null;
+  const yahoo     = yahooRes.status    === "fulfilled" ? yahooRes.value           : null;
+  const candles   = yahoo?.candles ?? null;
   const newsItems = newsRes.status     === "fulfilled" ? (newsRes.value ?? [])    : [];
 
-  const price     = quote?.c ?? 0;
-  const changePct = quote?.dp ?? 0;
+  // Price: Finnhub quote first, Yahoo fallback (Finnhub free tier is rate-limited).
+  const price     = quote?.c || yahoo?.price || 0;
+  const changePct = quote?.dp ?? yahoo?.changePct ?? 0;
+  const changeAbs = quote?.d ?? (yahoo?.prevClose != null ? price - yahoo.prevClose : 0);
   const isUp      = changePct >= 0;
-  const ccy       = profile?.currency?.toUpperCase() || "USD";
+  const ccy       = (profile?.currency || yahoo?.currency || "USD").toUpperCase();
   const cur       = currencySymbol(ccy);
+
+  // Metric sources with Yahoo fallback for fields Finnhub free tier no longer serves.
+  const prevClose = quote?.pc || yahoo?.prevClose || undefined;
+  const open      = quote?.o  || yahoo?.open      || undefined;
+  const dayHigh   = quote?.h  || yahoo?.dayHigh   || undefined;
+  const dayLow    = quote?.l  || yahoo?.dayLow    || undefined;
+  const wk52High  = fin?.["52WeekHigh"] ?? yahoo?.week52High ?? undefined;
+  const wk52Low   = fin?.["52WeekLow"]  ?? yahoo?.week52Low  ?? undefined;
 
   const chartData =
     candles?.s === "ok" && candles.t?.length
@@ -65,12 +76,12 @@ export default async function StockPage({
       : [];
 
   const metrics: [string, string][] = [
-    ["PREV CLOSE",   n(quote?.pc, 2, cur)],
-    ["OPEN",         n(quote?.o, 2, cur)],
-    ["DAY HIGH",     n(quote?.h, 2, cur)],
-    ["DAY LOW",      n(quote?.l, 2, cur)],
-    ["52W HIGH",     n(fin?.["52WeekHigh"], 2, cur)],
-    ["52W LOW",      n(fin?.["52WeekLow"], 2, cur)],
+    ["PREV CLOSE",   n(prevClose, 2, cur)],
+    ["OPEN",         n(open, 2, cur)],
+    ["DAY HIGH",     n(dayHigh, 2, cur)],
+    ["DAY LOW",      n(dayLow, 2, cur)],
+    ["52W HIGH",     n(wk52High, 2, cur)],
+    ["52W LOW",      n(wk52Low, 2, cur)],
     ["MKT CAP",      fmtCap(profile?.marketCapitalization, cur)],
     ["P/E",          n(fin?.peNormalizedAnnual, 1)],
     ["EPS (TTM)",    n(fin?.epsTTM, 2, cur)],
@@ -86,7 +97,7 @@ export default async function StockPage({
   return (
     <Panel
       title={`${symbol} · EQUITY`}
-      meta={profile?.name ?? (valid ? "STOCK" : "SYMBOL NOT FOUND")}
+      meta={profile?.name ?? yahoo?.name ?? (valid ? "STOCK" : "SYMBOL NOT FOUND")}
     >
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-4 mb-5">
@@ -100,7 +111,7 @@ export default async function StockPage({
               <div className={`text-[12px] mt-1.5 ${isUp ? "text-green" : "text-red"}`}>
                 {isUp ? "+" : ""}{changePct.toFixed(2)}%&nbsp;
                 <span className="text-muted">
-                  ({isUp ? "+" : ""}{(quote?.d ?? 0).toFixed(2)}) today
+                  ({isUp ? "+" : ""}{changeAbs.toFixed(2)}) today
                 </span>
               </div>
             </>
@@ -121,6 +132,11 @@ export default async function StockPage({
                   {profile.weburl.replace(/^https?:\/\//, "").replace(/\/$/, "")}
                 </a>
               )}
+            </div>
+          )}
+          {!profile?.exchange && yahoo?.exchange && (
+            <div className="text-dim text-[10px] mt-2">
+              <div className="uppercase">{yahoo.exchange}</div>
             </div>
           )}
         </div>
