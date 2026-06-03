@@ -20,6 +20,11 @@ const CRYPTO_IDS: Record<string, string> = {
   XLM: "stellar", APT: "aptos", ARB: "arbitrum", OP: "optimism",
   INJ: "injective-protocol", SUI: "sui", TON: "the-open-network",
   RNDR: "render-token",
+  HYPE: "hyperliquid",
+  WLD: "worldcoin-wld",
+  JUP: "jupiter-ag",
+  PENGU: "pudgy-penguins",
+  VIRTUAL: "virtual-protocol",
 };
 
 function cgHeaders(): Record<string, string> {
@@ -131,7 +136,7 @@ export default async function CryptoPage({
     chart?.prices?.map(([ts, p], i) => ({
       date: new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
       price: p,
-      volume: chart.total_volumes[i]?.[1] ?? 0,
+      volume: chart?.total_volumes?.[i]?.[1] ?? 0,
     })) ?? [];
 
   const metrics: [string, string][] = [

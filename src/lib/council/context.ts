@@ -57,6 +57,11 @@ const CRYPTO_IDS: Record<string, string> = {
   XLM: "stellar", APT: "aptos", ARB: "arbitrum", OP: "optimism",
   INJ: "injective-protocol", SUI: "sui", TON: "the-open-network",
   RNDR: "render-token",
+  HYPE: "hyperliquid",
+  WLD: "worldcoin-wld",
+  JUP: "jupiter-ag",
+  PENGU: "pudgy-penguins",
+  VIRTUAL: "virtual-protocol",
 };
 
 async function cgGet<T>(path: string): Promise<T | null> {
