@@ -225,21 +225,41 @@ type QuoteSummaryResponse = {
 let yahooSession: { cookie: string; crumb: string; fetchedAt: number } | null = null;
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
 
-async function refreshYahooSession(): Promise<typeof yahooSession> {
+function parseCookieHeader(raw: string): string {
+  // Reduce a Set-Cookie header value to name=value pairs for a Cookie request header.
+  return raw
+    .split(/,(?=\s*[A-Za-z0-9_-]+=)/)
+    .map((c) => c.split(";")[0].trim())
+    .filter(Boolean)
+    .join("; ");
+}
+
+async function tryGetCookie(url: string): Promise<string | null> {
+  // Node.js (undici) fetch with redirect:"manual" returns status 0 + empty headers
+  // on 3xx, so we MUST use redirect:"follow" to get final-response Set-Cookie.
+  // For fc.yahoo.com which returns 404 (not a redirect), follow is equivalent.
   try {
-    const seed = await fetch("https://fc.yahoo.com", {
+    const r = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0" },
-      redirect: "manual",
+      redirect: "follow",
       cache: "no-store",
     });
-    const setCookie = seed.headers.get("set-cookie");
-    if (!setCookie) return null;
-    // Reduce Set-Cookie to a Cookie header (name=value pairs).
-    const cookie = setCookie
-      .split(/,(?=\s*[A-Za-z0-9_-]+=)/)
-      .map((c) => c.split(";")[0].trim())
-      .filter(Boolean)
-      .join("; ");
+    const raw = r.headers.get("set-cookie");
+    if (!raw) return null;
+    const cookie = parseCookieHeader(raw);
+    return cookie || null;
+  } catch {
+    return null;
+  }
+}
+
+async function refreshYahooSession(): Promise<typeof yahooSession> {
+  try {
+    // Try fc.yahoo.com first (sets A3 cookie reliably in most regions).
+    // Fall back to finance.yahoo.com if fc returns no cookie.
+    const cookie =
+      (await tryGetCookie("https://fc.yahoo.com")) ??
+      (await tryGetCookie("https://finance.yahoo.com"));
     if (!cookie) return null;
     const crumbRes = await fetch("https://query1.finance.yahoo.com/v1/test/getcrumb", {
       headers: { "User-Agent": "Mozilla/5.0", Cookie: cookie },

@@ -57,8 +57,8 @@ export function AnalystCard({ summary, price, currency, currencySymbol: cur }: P
   const totalVotes = trend
     ? trend.strongBuy + trend.buy + trend.hold + trend.sell + trend.strongSell
     : 0;
-  const seg = (n: number): string =>
-    totalVotes > 0 ? `${(n / totalVotes) * 100}%` : "0%";
+  const seg = (votes: number): string =>
+    totalVotes > 0 ? `${(votes / totalVotes) * 100}%` : "0%";
 
   return (
     <div className="border border-border bg-grid p-3 mb-3">
