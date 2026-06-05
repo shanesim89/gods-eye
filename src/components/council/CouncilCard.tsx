@@ -83,7 +83,12 @@ export function CouncilCard({ ticker, assetClass }: Props) {
       });
 
       if (!res.ok || !res.body) {
-        throw new Error(`HTTP ${res.status}`);
+        // Clerk middleware rewrites unauthenticated API calls to /404 (HTML).
+        // Detect and surface a clearer message instead of "HTTP 404".
+        if (res.status === 404 || res.status === 401 || res.status === 307) {
+          throw new Error("Session expired — please reload and sign in again.");
+        }
+        throw new Error(`Council request failed (HTTP ${res.status})`);
       }
 
       const reader = res.body.getReader();

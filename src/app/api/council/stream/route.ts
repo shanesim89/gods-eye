@@ -9,11 +9,15 @@ import { synthesizeVerdict } from "@/lib/council/synthesize";
 import type { AssetClass, StreamEvent, Verdict } from "@/lib/council/types";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // seconds — Vercel default is 10s, council needs ~15–25s
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 function sse(event: StreamEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
+
+// SSE comment line — keeps proxies/clients from idling out without affecting parsing.
+const SSE_PING = ": keep-alive\n\n";
 
 export async function POST(req: Request) {
   const encoder = new TextEncoder();
@@ -23,6 +27,13 @@ export async function POST(req: Request) {
       const emit = (event: StreamEvent) => {
         controller.enqueue(encoder.encode(sse(event)));
       };
+
+      // Periodic keep-alive to defeat proxy/CDN idle buffering during long agent calls.
+      const pingTimer = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(SSE_PING));
+        } catch {/* controller closed */}
+      }, 5000);
 
       try {
         // Auth
@@ -116,8 +127,11 @@ export async function POST(req: Request) {
         controller.close();
       } catch (err) {
         const message = err instanceof Error ? err.message : "Internal error";
+        console.error("[council/stream] fatal", err);
         controller.enqueue(encoder.encode(sse({ type: "error", message })));
         controller.close();
+      } finally {
+        clearInterval(pingTimer);
       }
     },
   });
