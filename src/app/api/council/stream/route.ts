@@ -72,6 +72,7 @@ export async function POST(req: Request) {
             agents?: Verdict["agents"];
             tradeLevels?: Verdict["tradeLevels"];
             currency?: string;
+            laymanExplanation?: Verdict["laymanExplanation"];
           };
           const verdict: Verdict = {
             verdict: row.verdict as Verdict["verdict"],
@@ -81,6 +82,7 @@ export async function POST(req: Request) {
             generatedAt: row.fetched_at.toISOString(),
             tradeLevels: payload.tradeLevels ?? null,
             currency: payload.currency ?? "USD",
+            laymanExplanation: payload.laymanExplanation ?? null,
           };
           emit({ type: "verdict", data: verdict });
           controller.close();
@@ -119,6 +121,7 @@ export async function POST(req: Request) {
             agents: verdict.agents,
             tradeLevels: verdict.tradeLevels,
             currency: verdict.currency,
+            laymanExplanation: verdict.laymanExplanation,
           } as Record<string, unknown>,
           fetched_at: new Date(),
         });

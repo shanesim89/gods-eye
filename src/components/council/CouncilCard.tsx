@@ -6,6 +6,7 @@ import { currencySymbol } from "@/lib/format";
 import type {
   AgentResult,
   AssetClass,
+  LaymanExplanation,
   StreamEvent,
   TradeLevels,
   Verdict,
@@ -279,6 +280,14 @@ export function CouncilCard({ ticker, assetClass }: Props) {
         </div>
       )}
 
+      {/* Plain-English explanation */}
+      {verdict && verdict.laymanExplanation && (
+        <LaymanCard
+          verdict={verdict.verdict}
+          layman={verdict.laymanExplanation}
+        />
+      )}
+
       {/* Trade Levels sub-card */}
       {verdict && verdict.tradeLevels && (
         <TradeLevelsCard
@@ -332,6 +341,77 @@ export function CouncilCard({ ticker, assetClass }: Props) {
               )}
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LaymanCard({
+  verdict,
+  layman,
+}: {
+  verdict: VerdictType;
+  layman: LaymanExplanation;
+}) {
+  const actionColor =
+    verdict === "BUY"
+      ? "text-green"
+      : verdict === "SELL"
+      ? "text-red"
+      : "text-amber";
+
+  const why = Array.isArray(layman.why) ? layman.why : [];
+  const watch = Array.isArray(layman.whatToWatch) ? layman.whatToWatch : [];
+
+  return (
+    <div className="border border-border bg-grid p-3 mb-2">
+      <div className="text-muted text-[10px] uppercase tracking-[1px] mb-2">
+        ◉ PLAIN ENGLISH
+      </div>
+
+      {/* Action line */}
+      <div className={`text-[14px] font-bold leading-snug mb-2 ${actionColor}`}>
+        {layman.action}
+      </div>
+
+      {/* Why bullets */}
+      {why.length > 0 && (
+        <ul className="space-y-1 mb-2">
+          {why.map((reason, i) => (
+            <li key={i} className="text-[11px] text-text leading-relaxed flex gap-1.5">
+              <span className="text-amber shrink-0">›</span>
+              <span>{reason}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* When to reconsider */}
+      {layman.whenToReconsider && (
+        <div className="mt-2 pt-2 border-t border-border/40">
+          <div className="text-muted text-[9px] uppercase tracking-[1px] mb-0.5">
+            When to act
+          </div>
+          <div className="text-[11px] text-text leading-relaxed">
+            {layman.whenToReconsider}
+          </div>
+        </div>
+      )}
+
+      {/* What to watch */}
+      {watch.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-border/40">
+          <div className="text-muted text-[9px] uppercase tracking-[1px] mb-0.5">
+            Watch
+          </div>
+          <ul className="space-y-0.5">
+            {watch.map((risk, i) => (
+              <li key={i} className="text-[10px] text-dim italic leading-relaxed">
+                {risk}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

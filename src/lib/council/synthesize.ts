@@ -4,6 +4,7 @@ import { currencySymbol } from "@/lib/format";
 import type {
   AgentResult,
   CouncilContext,
+  LaymanExplanation,
   PriceRange,
   TradeLevels,
   Verdict,
@@ -67,8 +68,33 @@ const EMIT_VERDICT_TOOL: Anthropic.Tool = {
         },
         required: ["entry", "target", "stopLoss", "rationale"],
       },
+      laymanExplanation: {
+        type: "object" as const,
+        description: "Plain-English translation of the verdict + trade levels for a non-technical user. No jargon.",
+        properties: {
+          action: {
+            type: "string" as const,
+            description: "One short sentence starting with a verb (Buy/Sell/Wait/Avoid/Trim) telling the user what to do.",
+          },
+          why: {
+            type: "array" as const,
+            items: { type: "string" as const },
+            description: "Exactly 3 short bullet reasons, <15 words each, plain English, anchored in the agents' findings. NO ticker symbols, NO indicator names (MA20, RSI, P/E), NO percentages — translate into everyday language ('the stock has been steadily rising', 'earnings have been growing', 'the company carries a lot of debt').",
+          },
+          whenToReconsider: {
+            type: "string" as const,
+            description: "One concrete sentence referencing a specific price from tradeLevels (buyTrigger / sellTrigger / stopLoss). Example: 'Sell if the price drops below $145.'",
+          },
+          whatToWatch: {
+            type: "array" as const,
+            items: { type: "string" as const },
+            description: "1–2 short plain-English risks the user should watch for. Example: 'Earnings report on Jan 30 could swing the price.'",
+          },
+        },
+        required: ["action", "why", "whenToReconsider", "whatToWatch"],
+      },
     },
-    required: ["verdict", "confidence", "summary", "tradeLevels"],
+    required: ["verdict", "confidence", "summary", "tradeLevels", "laymanExplanation"],
   },
 };
 
@@ -248,7 +274,19 @@ TRADE LEVEL RULES:
 - Round to 2 decimals for stocks/ETF/options-underlying. For crypto: use ${priceDec} decimals.
 - The rationale field must be ONE sentence referencing specific levels (e.g. "Buy on pullback to MA20 at $145, target 90d high at $158, stop below 50d low.").
 
-Call emit_verdict with your synthesized judgment AND trade levels. Be decisive. No hedging.`;
+PLAIN-ENGLISH OUTPUT RULES (laymanExplanation field):
+- The user is NOT a finance professional. Translate everything.
+- BANNED in why[] and whatToWatch[]: "MA20", "MA50", "RSI", "MACD", "P/E", "EPS", "ROE", "support", "resistance", "breakout", "oversold", "overbought", ticker symbols, raw percentages, ratios, basis points.
+- ALLOWED: "the price has been steadily climbing/falling", "earnings are growing/shrinking", "the company has a lot/little debt", "investors are upbeat/nervous", "competitors are doing better/worse".
+- action: starts with a verb (Buy, Sell, Wait, Avoid, Trim, Hold). One short sentence. Match the BUY/HOLD/SELL verdict.
+- why: EXACTLY 3 bullets. Each <15 words. Grounded in what the agents actually said — do not invent.
+- whenToReconsider: MUST reference a concrete price in ${ctx.currency} that mirrors tradeLevels.buyTrigger (for HOLD/SELL), sellTrigger (for HOLD/BUY), or stopLoss. The user needs ONE clear number to remember.
+- whatToWatch: 1–2 short risks in plain English. Mention upcoming catalysts only if known.
+- For HOLD: action explains why waiting is better than acting now.
+- For BUY: action tells the user to buy and at what kind of price (now vs. on a pullback).
+- For SELL: action tells the user to sell or trim, and why now.
+
+Call emit_verdict with your synthesized judgment, trade levels, AND laymanExplanation. Be decisive. No hedging.`;
 
   try {
     const response = await anthropic.messages.create({
@@ -279,6 +317,12 @@ Call emit_verdict with your synthesized judgment AND trade levels. Be decisive. 
           sellTrigger?: number;
           rationale?: string;
         };
+        laymanExplanation?: {
+          action?: string;
+          why?: unknown;
+          whenToReconsider?: string;
+          whatToWatch?: unknown;
+        };
       };
 
       const verdictType = input.verdict ?? "HOLD";
@@ -302,6 +346,21 @@ Call emit_verdict with your synthesized judgment AND trade levels. Be decisive. 
         console.warn(`[council] Invalid trade levels for ${ctx.ticker} (${verdictType}):`, rawLevels);
       }
 
+      const rawLayman = input.laymanExplanation;
+      const laymanExplanation: LaymanExplanation | null =
+        rawLayman && typeof rawLayman.action === "string" && typeof rawLayman.whenToReconsider === "string"
+          ? {
+              action: rawLayman.action,
+              why: Array.isArray(rawLayman.why)
+                ? rawLayman.why.filter((p): p is string => typeof p === "string")
+                : [],
+              whenToReconsider: rawLayman.whenToReconsider,
+              whatToWatch: Array.isArray(rawLayman.whatToWatch)
+                ? rawLayman.whatToWatch.filter((p): p is string => typeof p === "string")
+                : [],
+            }
+          : null;
+
       return {
         verdict: verdictType,
         confidence: Math.max(0, Math.min(100, input.confidence ?? 50)),
@@ -310,6 +369,7 @@ Call emit_verdict with your synthesized judgment AND trade levels. Be decisive. 
         generatedAt: new Date().toISOString(),
         tradeLevels,
         currency: ctx.currency,
+        laymanExplanation,
       };
     }
 
@@ -321,6 +381,7 @@ Call emit_verdict with your synthesized judgment AND trade levels. Be decisive. 
       generatedAt: new Date().toISOString(),
       tradeLevels: null,
       currency: ctx.currency,
+      laymanExplanation: null,
     };
   } catch (err) {
     return {
@@ -331,6 +392,7 @@ Call emit_verdict with your synthesized judgment AND trade levels. Be decisive. 
       generatedAt: new Date().toISOString(),
       tradeLevels: null,
       currency: ctx.currency,
+      laymanExplanation: null,
     };
   }
 }

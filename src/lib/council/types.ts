@@ -21,6 +21,13 @@ export type TradeLevels = {
   rationale: string;        // 1-sentence why these levels
 };
 
+export type LaymanExplanation = {
+  action: string;            // "Buy now in small size" / "Wait — don't buy yet" / "Sell or trim"
+  why: string[];             // 3 plain-English reasons, no jargon
+  whenToReconsider: string;  // "Sell if price drops below $145" — mirrors a tradeLevels number
+  whatToWatch: string[];     // 1–2 plain-English risks
+};
+
 export type Verdict = {
   verdict: VerdictType;
   confidence: number; // 0–100
@@ -29,6 +36,7 @@ export type Verdict = {
   generatedAt: string;
   tradeLevels?: TradeLevels | null; // null/undefined for legacy cached rows
   currency?: string; // ISO code; legacy rows omit -> default USD
+  laymanExplanation?: LaymanExplanation | null; // null/undefined for legacy rows
 };
 
 export type StreamEvent =
