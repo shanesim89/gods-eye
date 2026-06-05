@@ -320,7 +320,7 @@ export function CouncilCard({ ticker, assetClass }: Props) {
                 {a.role} · {a.signal.toUpperCase()} · {a.confidence}%
               </div>
               <p className="text-text leading-relaxed">{a.thesis}</p>
-              {a.keyPoints.length > 0 && (
+              {Array.isArray(a.keyPoints) && a.keyPoints.length > 0 && (
                 <ul className="mt-1 space-y-0.5">
                   {a.keyPoints.map((pt, i) => (
                     <li key={i} className="text-dim flex gap-1">

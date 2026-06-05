@@ -205,7 +205,7 @@ export async function synthesizeVerdict(
       return `## ${a.role} (weight ${(w * 100).toFixed(0)}%, confidence ${a.confidence}%, signal: ${a.signal.toUpperCase()})
 Thesis: ${a.thesis}
 Key points:
-${a.keyPoints.map((p) => `- ${p}`).join("\n")}`;
+${(Array.isArray(a.keyPoints) ? a.keyPoints : []).map((p) => `- ${p}`).join("\n")}`;
     })
     .join("\n\n");
 

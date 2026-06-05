@@ -79,7 +79,7 @@ export function AgentPanel({ role, result, loading }: Props) {
             <p className="text-[10px] text-text leading-relaxed line-clamp-3">
               {result.thesis}
             </p>
-            {result.keyPoints.length > 0 && (
+            {Array.isArray(result.keyPoints) && result.keyPoints.length > 0 && (
               <ul className="mt-1.5 space-y-0.5">
                 {result.keyPoints.slice(0, 3).map((pt, i) => (
                   <li key={i} className="text-[9px] text-dim flex gap-1">

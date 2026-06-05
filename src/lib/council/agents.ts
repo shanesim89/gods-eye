@@ -172,7 +172,7 @@ export async function runAgent(
         signal: input.signal ?? "neutral",
         confidence: Math.max(0, Math.min(100, input.confidence ?? 50)),
         thesis: input.thesis ?? "",
-        keyPoints: input.keyPoints ?? [],
+        keyPoints: Array.isArray(input.keyPoints) ? input.keyPoints.filter((p): p is string => typeof p === "string") : [],
       };
     }
 
