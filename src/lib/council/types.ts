@@ -103,4 +103,6 @@ export type CouncilContext = {
     socialVolume: number | null;
     sentiment: number | null; // 0–100
   } | null;
+  // Kronos foundation-model forecast (stocks/etf/crypto only, null if unavailable)
+  kronos?: import("@/lib/kronos").KronosForecast | null;
 };

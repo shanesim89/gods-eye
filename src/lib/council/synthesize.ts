@@ -141,6 +141,18 @@ function buildReferenceBlock(ctx: CouncilContext): string {
   return lines.join("\n");
 }
 
+function buildKronosBlock(ctx: CouncilContext): string | null {
+  const k = ctx.kronos;
+  if (!k) return null;
+  const sign = k.priceDeltaPct >= 0 ? "+" : "";
+  const conviction =
+    k.sampleStd < 1 ? "HIGH" : k.sampleStd < 3 ? "MODERATE" : "LOW";
+  return [
+    "KRONOS AI FORECAST",
+    `Direction: ${k.direction.toUpperCase()} | Change: ${sign}${k.priceDeltaPct.toFixed(2)}% | Model conviction: ${conviction} (std-dev ${k.sampleStd.toFixed(2)}%)`,
+  ].join("\n");
+}
+
 function fmtPct(v: number | null | undefined, dec = 1): string {
   if (v == null || !Number.isFinite(v)) return "n/a";
   return `${v.toFixed(dec)}%`;
@@ -216,13 +228,14 @@ export async function synthesizeVerdict(
   anthropic: Anthropic
 ): Promise<Verdict> {
   const weights: Record<string, number> = {
-    TECHNICAL: 0.25,
-    FUNDAMENTAL: 0.30,
-    "ON-CHAIN": 0.30,
-    FLOW: 0.30,
+    TECHNICAL: 0.20,
+    FUNDAMENTAL: 0.25,
+    "ON-CHAIN": 0.25,
+    FLOW: 0.25,
     SENTIMENT: 0.20,
-    MACRO: 0.25,
+    MACRO: 0.20,
     RISK: 0.25,
+    FORECAST: 0.15,  // experimental — modest weight until hit-rate validated
   };
 
   const agentSummary = agents
@@ -238,9 +251,10 @@ ${(Array.isArray(a.keyPoints) ? a.keyPoints : []).map((p) => `- ${p}`).join("\n"
   const refBlock = buildReferenceBlock(ctx);
   const fundBlock = buildFundamentalsBlock(ctx);
   const analystBlock = buildAnalystSynthBlock(ctx);
+  const kronosBlock = buildKronosBlock(ctx);
   const priceDec = ctx.price < 1 ? 4 : 2;
   const cur = currencySymbol(ctx.currency);
-  const extraContext = [fundBlock, analystBlock].filter(Boolean).join("\n\n");
+  const extraContext = [fundBlock, analystBlock, kronosBlock].filter(Boolean).join("\n\n");
 
   const systemPrompt = `You are the CHIEF INVESTMENT OFFICER of the Investment Council.
 You must synthesize the analyses from 4 specialist agents into a single BUY / HOLD / SELL verdict for ${ctx.ticker}.

@@ -7,10 +7,10 @@ const HAIKU = "claude-haiku-4-5-20251001";
 
 export function getRoles(assetClass: AssetClass): string[] {
   switch (assetClass) {
-    case "stocks": return ["TECHNICAL", "FUNDAMENTAL", "SENTIMENT", "MACRO"];
-    case "etf":    return ["TECHNICAL", "FUNDAMENTAL", "SENTIMENT", "MACRO"];
-    case "crypto": return ["TECHNICAL", "ON-CHAIN", "SENTIMENT", "MACRO"];
-    case "options": return ["TECHNICAL", "FLOW", "SENTIMENT", "RISK"];
+    case "stocks":  return ["TECHNICAL", "FUNDAMENTAL", "SENTIMENT", "MACRO", "FORECAST"];
+    case "etf":     return ["TECHNICAL", "FUNDAMENTAL", "SENTIMENT", "MACRO", "FORECAST"];
+    case "crypto":  return ["TECHNICAL", "ON-CHAIN", "SENTIMENT", "MACRO", "FORECAST"];
+    case "options": return ["TECHNICAL", "FLOW", "SENTIMENT", "RISK"]; // no FORECAST for options
   }
 }
 
@@ -72,6 +72,29 @@ Current price: ${cur}${ctx.price.toFixed(2)} ${ctx.currency} (${ctx.changePct >=
     extras.push(`Option: ${o.optionType} ${o.strike} exp ${o.expiry} on ${o.underlying} (underlying price ${cur}${o.underlyingPrice.toFixed(2)})`);
   }
 
+  if (ctx.kronos) {
+    const k = ctx.kronos;
+    const sign = k.priceDeltaPct >= 0 ? "+" : "";
+    const uncertainty = k.sampleStd > 0
+      ? `Uncertainty (sample std-dev): ${k.sampleStd.toFixed(2)}% — ${
+          k.sampleStd < 1 ? "high model conviction" :
+          k.sampleStd < 3 ? "moderate conviction" : "low conviction / noisy signal"
+        }`
+      : "";
+    const barCloses = k.bars.length
+      ? `Bar-by-bar predicted closes: [${k.bars.map((b) => b.close.toFixed(2)).join(", ")}]`
+      : "";
+    extras.push(
+      `Kronos AI forecast (next ${k.bars.length || "N"} bars):\n` +
+      `Direction: ${k.direction.toUpperCase()}\n` +
+      `Predicted price change: ${sign}${k.priceDeltaPct.toFixed(2)}%\n` +
+      (uncertainty ? `${uncertainty}\n` : "") +
+      (barCloses ? `${barCloses}\n` : "")
+    );
+  } else if (role === "FORECAST") {
+    extras.push("Kronos forecast: UNAVAILABLE (model endpoint not reachable or timed out)");
+  }
+
   if (ctx.lunarcrush) {
     const lc = ctx.lunarcrush;
     const parts: string[] = [];
@@ -90,6 +113,7 @@ Current price: ${cur}${ctx.price.toFixed(2)} ${ctx.currency} (${ctx.changePct >=
     "ON-CHAIN": "Focus on blockchain fundamentals: network activity, token supply dynamics, circulating vs max supply, volume/market cap ratio, and on-chain adoption signals.",
     FLOW: "Focus on options flow patterns, put/call ratios, implied volatility, open interest, and what the flow implies about institutional positioning.",
     RISK: "Focus on risk factors: time decay (theta), IV rank, liquidity risk, max loss scenario, probability of profit, and whether the risk/reward is favorable.",
+    FORECAST: "You are the QUANTITATIVE FORECAST ANALYST. Your sole input is the Kronos foundation-model prediction above. Report: (1) direction and magnitude of the predicted move, (2) whether model conviction is high or low based on sample std-dev, (3) whether this forecast agrees or disagrees with the recent price trend. If the Kronos forecast is UNAVAILABLE, emit signal=neutral, confidence=0, thesis='Kronos model unavailable — no quantitative forecast this session.', keyPoints=['Forecast model endpoint timed out or not configured'].",
   };
 
   const instruction = roleInstructions[role] ?? `Focus on your area of expertise: ${role}.`;

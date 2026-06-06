@@ -198,7 +198,7 @@ export function CouncilCard({ ticker, assetClass }: Props) {
 
       {/* Agent grid */}
       {displayRoles.length > 0 ? (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
           {displayRoles.map((role) => (
             <AgentPanel
               key={role}
@@ -209,8 +209,8 @@ export function CouncilCard({ ticker, assetClass }: Props) {
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3 text-[10px] text-dim italic">
-          {[...Array(4)].map((_, i) => (
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3 text-[10px] text-dim italic">
+          {[...Array(5)].map((_, i) => (
             <div key={i} className="border border-border/40 p-2.5 min-h-[110px] flex items-center justify-center text-dim/50">
               —
             </div>

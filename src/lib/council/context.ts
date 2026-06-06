@@ -6,6 +6,7 @@ import {
   getCompanyNews,
 } from "@/lib/finnhub";
 import { getYahooData, getYahooSummary, type YahooSummary } from "@/lib/yahoo";
+import { getKronosForecast, candlesToOHLCV } from "@/lib/kronos";
 import type { AssetClass, CouncilContext } from "./types";
 
 function buildAnalystBlock(
@@ -143,6 +144,21 @@ export async function buildContext(
     const news    = newsRes.status    === "fulfilled" ? newsRes.value    : null;
     const lcData  = lc.status         === "fulfilled" ? lc.value         : null;
 
+    // Kronos: needs candles first, then fires (null-safe on failure/timeout)
+    const kronosCtxCandles =
+      candles?.s === "ok" && candles.t?.length
+        ? {
+            dates: candles.t.map((ts) => new Date(ts * 1000).toISOString().slice(0, 10)),
+            closes: candles.c,
+            volumes: candles.v,
+          }
+        : null;
+    const kronosData = await getKronosForecast({
+      ohlcv: candlesToOHLCV(kronosCtxCandles),
+      predLen: 5,   // 1 trading week
+      samples: 8,
+    });
+
     // Finnhub free tier no longer serves basic-financials; backfill 52w from Yahoo
     // so the synthesizer's computeRefs has real anchors.
     const fin: Record<string, number | undefined> | null =
@@ -187,6 +203,7 @@ export async function buildContext(
       })) ?? null,
       analyst: buildAnalystBlock(summary, quote?.c || yahoo?.price || 0),
       lunarcrush: lcData,
+      kronos: kronosData,
     };
   }
 
@@ -243,6 +260,19 @@ export async function buildContext(
     const lcData = lcRes.status  === "fulfilled" ? lcRes.value  : null;
     const md = coin?.market_data;
 
+    const cryptoKronosCandles = chart?.prices?.length
+      ? {
+          dates: chart.prices.map(([ts]) => new Date(ts).toISOString().slice(0, 10)),
+          closes: chart.prices.map(([, p]) => p),
+          volumes: chart.total_volumes?.map(([, v]) => v) ?? [],
+        }
+      : null;
+    const kronosCryptoData = await getKronosForecast({
+      ohlcv: candlesToOHLCV(cryptoKronosCandles),
+      predLen: 7,   // 1 week of daily bars
+      samples: 8,
+    });
+
     const cryptoCandles =
       chart?.prices?.length
         ? {
@@ -275,6 +305,7 @@ export async function buildContext(
           }
         : null,
       lunarcrush: lcData,
+      kronos: kronosCryptoData,
     };
   }
 
