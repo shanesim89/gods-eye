@@ -19,6 +19,7 @@ image = (
         "huggingface_hub>=0.23.0",
         "pandas>=2.0.0",
         "numpy>=1.24.0",
+        "fastapi[standard]",
         extra_index_url="https://download.pytorch.org/whl/cpu",
     )
     .run_commands(
