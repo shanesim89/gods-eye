@@ -42,9 +42,13 @@ export async function getRate(from: string, to: string): Promise<number> {
       });
 
     return rate;
-  } catch {
-    // Last resort: stale cached value if any, else 1
-    if (cached.length > 0) return Number(cached[0].rate);
+  } catch (err) {
+    // Last resort: stale cached value if any, else surface failure so callers can flag UI.
+    if (cached.length > 0) {
+      console.warn(`[fx] using stale cached rate ${from}→${to}: ${(err as Error).message}`);
+      return Number(cached[0].rate);
+    }
+    console.error(`[fx] failed ${from}→${to}, returning 1:1 fallback: ${(err as Error).message}`);
     return 1;
   }
 }

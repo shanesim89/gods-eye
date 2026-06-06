@@ -23,10 +23,18 @@ const MONEY_SUBS = [
 function useClock() {
   const [now, setNow] = useState<string>("");
   useEffect(() => {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    const fmt = new Intl.DateTimeFormat("en-CA", {
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      hour12: false, timeZone: tz,
+    });
+    const tzShort = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "short" })
+      .formatToParts(new Date()).find(p => p.type === "timeZoneName")?.value || tz;
     const tick = () => {
-      const d = new Date();
-      const iso = d.toISOString().replace("T", " ").slice(0, 19);
-      setNow(`${iso} UTC`);
+      const parts = fmt.formatToParts(new Date());
+      const get = (t: string) => parts.find(p => p.type === t)?.value ?? "";
+      setNow(`${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")} ${tzShort}`);
     };
     tick();
     const id = setInterval(tick, 1000);

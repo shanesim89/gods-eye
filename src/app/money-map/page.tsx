@@ -125,10 +125,15 @@ export default async function MoneyMapPage() {
     });
   }
 
-  // Income (next expected: assume monthly = +30d from now, except those without next_charge concept; approximate by adding 30d)
+  // Income (we don't store explicit paydates, so estimate next-event horizon from cycle).
   for (const i of incRows) {
-    // monthly cycle → next paydate guess: 5 days from now (we don't store paydate yet); shown as ETA
-    const days = i.cycle === "monthly" ? 7 : i.cycle === "weekly" ? 3 : i.cycle === "yearly" ? 60 : 10;
+    const days =
+      i.cycle === "daily"     ? 1  :
+      i.cycle === "weekly"    ? 7  :
+      i.cycle === "monthly"   ? 30 :
+      i.cycle === "quarterly" ? 90 :
+      i.cycle === "yearly"    ? 365 :
+      30;
     const d = new Date(now + days * 86400_000);
     const m = toMonthly(Number(i.amount), i.cycle);
     events.push({

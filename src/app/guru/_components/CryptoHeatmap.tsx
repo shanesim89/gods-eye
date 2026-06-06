@@ -26,7 +26,11 @@ function fmtPrice(p: number): string {
 
 export function CryptoHeatmap({ data }: { data: CryptoTile[] }) {
   if (data.length === 0)
-    return <div className="text-dim text-[10px] italic">no data</div>;
+    return (
+      <div className="text-red text-[10px] italic border border-red/40 bg-red/5 p-3">
+        ⚠ Crypto heatmap unavailable — CoinGecko returned no data (rate limit or outage). Try again shortly.
+      </div>
+    );
 
   const maxCap = Math.max(...data.map((d) => d.mktCap));
 
@@ -39,7 +43,7 @@ export function CryptoHeatmap({ data }: { data: CryptoTile[] }) {
   return (
     <div>
       {/* Quick stats */}
-      <div className="flex gap-4 mb-3 text-[10px]">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 mb-3 text-[10px]">
         <span className="text-muted">
           TOP GAINERS:{" "}
           {gainers.map((t) => (

@@ -98,17 +98,32 @@ export default async function CryptoPage({
   const { ticker } = await params;
   const symbol = ticker.toUpperCase().replace(/-USDT?$/i, "");
 
-  // Resolve CoinGecko ID
+  // Resolve CoinGecko ID. CoinGecko search returns many coins sharing a symbol
+  // (e.g. "BTC" matches dozens of forks); pick the one with the LOWEST market_cap_rank,
+  // and require an exact symbol match — otherwise refuse rather than silently rendering
+  // a wrong coin.
   let cgId: string | null = CRYPTO_IDS[symbol] ?? null;
+  let cgAmbiguousNote: string | null = null;
   if (!cgId) {
-    // Fallback search
-    const searchRes = await cgGet<{ coins: { id: string; symbol: string }[] }>(
-      `/search?query=${encodeURIComponent(symbol)}`
+    const searchRes = await cgGet<{
+      coins: { id: string; symbol: string; market_cap_rank: number | null }[];
+    }>(`/search?query=${encodeURIComponent(symbol)}`);
+    const exact = (searchRes?.coins ?? []).filter(
+      (c) => c.symbol?.toUpperCase() === symbol
     );
-    const match =
-      searchRes?.coins?.find((c) => c.symbol?.toUpperCase() === symbol) ??
-      searchRes?.coins?.[0];
-    cgId = match?.id ?? null;
+    if (exact.length === 0) {
+      cgId = null;
+    } else {
+      exact.sort(
+        (a, b) =>
+          (a.market_cap_rank ?? Number.POSITIVE_INFINITY) -
+          (b.market_cap_rank ?? Number.POSITIVE_INFINITY)
+      );
+      cgId = exact[0]?.id ?? null;
+      if (exact.length > 1) {
+        cgAmbiguousNote = `${exact.length} coins share symbol ${symbol}; resolved to #${exact[0].market_cap_rank ?? "?"} by mkt cap`;
+      }
+    }
   }
 
   const [coinRes, chartRes] = await Promise.allSettled([
@@ -140,8 +155,8 @@ export default async function CryptoPage({
     })) ?? [];
 
   const metrics: [string, string][] = [
-    ["24H HIGH",     fmtBig(md?.high_24h?.usd) === "—" ? `$${fmt(md?.high_24h?.usd)}` : `$${fmt(md?.high_24h?.usd)}`],
-    ["24H LOW",      `$${fmt(md?.low_24h?.usd)}`],
+    ["24H HIGH",     md?.high_24h?.usd != null ? `$${fmt(md.high_24h.usd, md.high_24h.usd >= 1 ? 2 : 6)}` : "—"],
+    ["24H LOW",      md?.low_24h?.usd  != null ? `$${fmt(md.low_24h.usd,  md.low_24h.usd  >= 1 ? 2 : 6)}` : "—"],
     ["7D CHANGE",    md?.price_change_percentage_7d != null ? `${fmt(md.price_change_percentage_7d, 2)}%` : "—"],
     ["30D CHANGE",   md?.price_change_percentage_30d != null ? `${fmt(md.price_change_percentage_30d, 2)}%` : "—"],
     ["MARKET CAP",   fmtBig(md?.market_cap?.usd)],
@@ -176,6 +191,9 @@ export default async function CryptoPage({
             <div className="text-muted text-[12px] italic">
               {cgId ? "no price data" : `unknown ticker — ${symbol} not in top-30 map and search failed`}
             </div>
+          )}
+          {cgAmbiguousNote && (
+            <div className="text-amber text-[10px] mt-1 italic">⚠ {cgAmbiguousNote}</div>
           )}
           {coin?.links?.homepage?.[0] && (
             <a

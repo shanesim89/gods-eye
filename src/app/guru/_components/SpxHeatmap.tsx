@@ -20,7 +20,11 @@ function pctFg(pct: number): string {
 
 export function SpxHeatmap({ data }: { data: SpxTile[] }) {
   if (data.length === 0)
-    return <div className="text-dim text-[10px] italic">no data</div>;
+    return (
+      <div className="text-red text-[10px] italic border border-red/40 bg-red/5 p-3">
+        ⚠ S&amp;P 500 heatmap unavailable — upstream market data feed (Finnhub / Yahoo) returned no data. Refresh in a few minutes; check FOOTER status row for feed health.
+      </div>
+    );
 
   // Group by sector, preserve insertion order
   const sectorMap = new Map<string, SpxTile[]>();

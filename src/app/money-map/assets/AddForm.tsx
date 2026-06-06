@@ -8,15 +8,22 @@ const CURRENCIES = ["SGD", "USD", "EUR", "GBP", "JPY", "CNY", "AUD", "MYR", "HKD
 export function AddForm({ liabilities }: { liabilities: { id: string; name: string }[] }) {
   const [pending, start] = useTransition();
   const [err, setErr] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
 
   return (
     <form
       action={(fd) => {
         setErr(null);
+        setOk(null);
+        const name = String(fd.get("name") ?? "").trim() || "asset";
         start(async () => {
           const r = await createAsset(fd);
           if (r && "error" in r && r.error) setErr(r.error);
-          else (document.getElementById("asset-form") as HTMLFormElement)?.reset();
+          else {
+            (document.getElementById("asset-form") as HTMLFormElement)?.reset();
+            setOk(`✓ added ${name}`);
+            setTimeout(() => setOk(null), 3000);
+          }
         });
       }}
       id="asset-form"
@@ -43,6 +50,7 @@ export function AddForm({ liabilities }: { liabilities: { id: string; name: stri
         </button>
       </div>
       {err && (<div className="md:col-span-8 text-red text-[11px]">! {err}</div>)}
+      {ok && (<div className="md:col-span-8 text-green text-[11px]">{ok}</div>)}
     </form>
   );
 }

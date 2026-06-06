@@ -58,21 +58,21 @@ function FGMeter({
       {/* Zone pills */}
       <div className="flex gap-0.5 mt-1.5">
         {[
-          { lbl: "E.FEAR", max: 25, col: "#ef4444" },
-          { lbl: "FEAR",   max: 45, col: "#f97316" },
-          { lbl: "NEUT",   max: 55, col: "#eab308" },
-          { lbl: "GREED",  max: 75, col: "#84cc16" },
-          { lbl: "E.GREED",max: 100, col: "#22c55e" },
-        ].map((z) => (
-          <div
-            key={z.lbl}
-            className="flex-1 h-1 rounded-sm"
-            style={{
-              background: z.col,
-              opacity: value <= z.max && value > (z.max === 25 ? 0 : z.max === 45 ? 25 : z.max === 55 ? 45 : z.max === 75 ? 55 : 75) ? 1 : 0.2,
-            }}
-          />
-        ))}
+          { lbl: "E.FEAR",  min: 0,  max: 25,  col: "#ef4444" },
+          { lbl: "FEAR",    min: 25, max: 45,  col: "#f97316" },
+          { lbl: "NEUT",    min: 45, max: 55,  col: "#eab308" },
+          { lbl: "GREED",   min: 55, max: 75,  col: "#84cc16" },
+          { lbl: "E.GREED", min: 75, max: 100, col: "#22c55e" },
+        ].map((z) => {
+          const active = value > z.min && value <= z.max;
+          return (
+            <div
+              key={z.lbl}
+              className="flex-1 h-1 rounded-sm"
+              style={{ background: z.col, opacity: active ? 1 : 0.2 }}
+            />
+          );
+        })}
       </div>
     </div>
   );

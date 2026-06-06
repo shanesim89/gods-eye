@@ -32,6 +32,13 @@ export function PriceChart({ data, currency = "$" }: { data: DataPoint[]; curren
   const priceDiff = lastPrice - firstPrice;
   const lineColor = priceDiff >= 0 ? "#22c55e" : "#ef4444";
 
+  const tickFmt = (v: number): string => {
+    if (v >= 100_000) return `${currency}${(v / 1000).toFixed(0)}k`;
+    if (v >= 1_000)   return `${currency}${(v / 1000).toFixed(1)}k`;
+    if (v >= 1)       return `${currency}${v.toFixed(2)}`;
+    return `${currency}${v.toFixed(4)}`;
+  };
+
   return (
     <ResponsiveContainer width="100%" height={220}>
       <ComposedChart data={data} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
@@ -53,8 +60,8 @@ export function PriceChart({ data, currency = "$" }: { data: DataPoint[]; curren
           tick={{ fill: "#4b5563", fontSize: 9, fontFamily: mono }}
           tickLine={false}
           axisLine={false}
-          tickFormatter={(v: number) => `${currency}${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(0)}`}
-          width={46}
+          tickFormatter={tickFmt}
+          width={54}
         />
         <YAxis
           yAxisId="volume"

@@ -53,6 +53,13 @@ export default async function StockPage({
   const candles   = yahoo?.candles ?? null;
   const newsItems = newsRes.status     === "fulfilled" ? (newsRes.value ?? [])    : [];
 
+  // Diagnose failures so we never silently render price=0.
+  const allFetchFailed =
+    profileRes.status === "rejected" &&
+    quoteRes.status   === "rejected" &&
+    yahooRes.status   === "rejected";
+  const anyDataPresent = !!(profile || quote?.c || yahoo?.price);
+
   // Price: Finnhub quote first, Yahoo fallback (Finnhub free tier is rate-limited).
   const price     = quote?.c || yahoo?.price || 0;
   const changePct = quote?.dp ?? yahoo?.changePct ?? 0;
@@ -119,7 +126,13 @@ export default async function StockPage({
               </div>
             </>
           ) : (
-            <div className="text-muted text-[12px] italic">no price data — check ticker</div>
+            <div className="text-muted text-[12px] italic">
+              {allFetchFailed
+                ? "all data sources unreachable — try again shortly"
+                : anyDataPresent
+                ? "price feed temporarily unavailable"
+                : `no data for ${symbol} — check ticker`}
+            </div>
           )}
           {(summary?.sector || summary?.industry) && (
             <div className="text-dim text-[10px] mt-2 uppercase tracking-[0.5px]">
