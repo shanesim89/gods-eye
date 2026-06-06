@@ -34,8 +34,8 @@ app = modal.App("kronos-forecast", image=image)
 @app.cls(
     cpu=2.0,
     memory=4096,
-    container_idle_timeout=300,   # sleep after 5 min idle — no idle cost
-    timeout=120,                  # hard kill after 2 min
+    scaledown_window=300,   # sleep after 5 min idle — no idle cost
+    timeout=120,            # hard kill after 2 min
 )
 class KronosService:
 
