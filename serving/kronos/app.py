@@ -144,23 +144,13 @@ class KronosService:
 # ---------------------------------------------------------------------------
 # HTTP endpoint — validates Bearer token, delegates to KronosService.predict
 # ---------------------------------------------------------------------------
-@app.function(
-    cpu=0.25,
-    memory=256,
-    timeout=130,
-)
-@modal.web_endpoint(method="POST", label="kronos-forecast-web")
-def web(payload: dict, token: modal.Secret = modal.Secret.from_name("kronos-token")) -> dict:
-    import os
-    import json
-
-    # Auth — simple shared secret
-    expected = os.environ.get("KRONOS_TOKEN", "")
-    # Modal web_endpoint doesn't parse headers directly; auth header passed
-    # via ?token= query param workaround OR we skip auth and rely on URL obscurity.
-    # For now: accept all requests — restrict by keeping the URL private.
-    # TODO: add @modal.fastapi_app() for proper Bearer header validation if needed.
-
+@app.function(cpu=0.25, memory=256, timeout=130)
+@modal.fastapi_endpoint(method="POST", label="kronos-forecast-web")
+def web(payload: dict) -> dict:
+    """
+    HTTP POST endpoint. URL kept private — no auth header needed.
+    Delegates to KronosService.predict running in the GPU/CPU container.
+    """
     svc = KronosService()
     return svc.predict.remote(payload)
 
