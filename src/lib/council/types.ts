@@ -37,11 +37,27 @@ export type Verdict = {
   tradeLevels?: TradeLevels | null; // null/undefined for legacy cached rows
   currency?: string; // ISO code; legacy rows omit -> default USD
   laymanExplanation?: LaymanExplanation | null; // null/undefined for legacy rows
+  aggregateRankings?: AggregateRanking[]; // peer-review rankings; absent for legacy cached rows
+};
+
+export type PeerRanking = {
+  reviewerRole: string;
+  rankedOrder: string[];                  // roles ordered best→worst
+  reasoning: Record<string, string>;      // role → 1-sentence reason
+};
+
+export type AggregateRanking = {
+  role: string;
+  avgRank: number;    // 1.0 = best, 5.0 = worst
+  topVotes: number;   // count of peers who ranked this #1
 };
 
 export type StreamEvent =
   | { type: "agent_start"; role: string }
   | { type: "agent_done"; result: AgentResult }
+  | { type: "stage2_start" }
+  | { type: "stage2_peer_done"; reviewerRole: string; rankedOrder: string[] }
+  | { type: "stage2_complete"; aggregateRankings: AggregateRanking[] }
   | { type: "synth_start" }
   | { type: "verdict"; data: Verdict }
   | { type: "error"; message: string };

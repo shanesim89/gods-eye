@@ -22,9 +22,11 @@ type Props = {
   role: string;
   result?: AgentResult;
   loading?: boolean;
+  peerRank?: number;
+  totalPeers?: number;
 };
 
-export function AgentPanel({ role, result, loading }: Props) {
+export function AgentPanel({ role, result, loading, peerRank, totalPeers }: Props) {
   const icon = ROLE_ICONS[role] ?? "·";
   const signal = result?.signal;
   const signalClass = signal ? SIGNAL_COLORS[signal] : "";
@@ -42,6 +44,20 @@ export function AgentPanel({ role, result, loading }: Props) {
             className={`text-[9px] border px-1.5 py-0.5 uppercase tracking-wider font-bold ${signalClass}`}
           >
             {signal}
+          </span>
+        )}
+        {peerRank != null && (
+          <span
+            className={`text-[8px] border px-1 py-0.5 uppercase tracking-wider tabular-nums ${
+              peerRank === 1
+                ? "border-amber/60 text-amber bg-amber/5"
+                : peerRank === totalPeers
+                ? "border-border text-dim"
+                : "border-border/40 text-dim/70"
+            }`}
+            title={`Peer rank: #${peerRank} of ${totalPeers}`}
+          >
+            #{peerRank}
           </span>
         )}
       </div>

@@ -5,6 +5,7 @@ import { AgentPanel } from "./AgentPanel";
 import { currencySymbol } from "@/lib/format";
 import type {
   AgentResult,
+  AggregateRanking,
   AssetClass,
   LaymanExplanation,
   StreamEvent,
@@ -52,6 +53,8 @@ export function CouncilCard({ ticker, assetClass }: Props) {
   const [agentMap, setAgentMap] = useState<Record<string, AgentResult>>({});
   const [loadingRoles, setLoadingRoles] = useState<Set<string>>(new Set());
   const [synthLoading, setSynthLoading] = useState(false);
+  const [stage2Loading, setStage2Loading] = useState(false);
+  const [aggregateRankings, setAggregateRankings] = useState<AggregateRanking[] | null>(null);
   const [verdict, setVerdict] = useState<Verdict | null>(() =>
     loadCached(ticker, assetClass)
   );
@@ -75,6 +78,8 @@ export function CouncilCard({ ticker, assetClass }: Props) {
     setLoadingRoles(new Set());
     setRoles([]);
     setSynthLoading(false);
+    setStage2Loading(false);
+    setAggregateRankings(null);
 
     try {
       const res = await fetch("/api/council/stream", {
@@ -138,6 +143,19 @@ export function CouncilCard({ ticker, assetClass }: Props) {
         });
         break;
 
+      case "stage2_start":
+        setStage2Loading(true);
+        break;
+
+      case "stage2_peer_done":
+        // no per-reviewer UI in v1 — event emitted for future use
+        break;
+
+      case "stage2_complete":
+        setStage2Loading(false);
+        setAggregateRankings(event.aggregateRankings);
+        break;
+
       case "synth_start":
         setSynthLoading(true);
         break;
@@ -146,6 +164,10 @@ export function CouncilCard({ ticker, assetClass }: Props) {
         setSynthLoading(false);
         setVerdict(event.data);
         saveCache(ticker, assetClass, event.data);
+        // Restore rankings from verdict (cached path)
+        if (event.data.aggregateRankings) {
+          setAggregateRankings(event.data.aggregateRankings);
+        }
         // Ensure roles are populated from cached verdict agents if needed
         if (event.data.agents.length > 0 && roles.length === 0) {
           setRoles(event.data.agents.map((a) => a.role));
@@ -199,14 +221,21 @@ export function CouncilCard({ ticker, assetClass }: Props) {
       {/* Agent grid */}
       {displayRoles.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
-          {displayRoles.map((role) => (
-            <AgentPanel
-              key={role}
-              role={role}
-              result={displayAgentMap[role]}
-              loading={loadingRoles.has(role)}
-            />
-          ))}
+          {displayRoles.map((role) => {
+            const peerRank = aggregateRankings
+              ? aggregateRankings.findIndex((ar) => ar.role === role) + 1
+              : undefined;
+            return (
+              <AgentPanel
+                key={role}
+                role={role}
+                result={displayAgentMap[role]}
+                loading={loadingRoles.has(role)}
+                peerRank={peerRank || undefined}
+                totalPeers={aggregateRankings?.length}
+              />
+            );
+          })}
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3 text-[10px] text-dim italic">
@@ -215,6 +244,13 @@ export function CouncilCard({ ticker, assetClass }: Props) {
               —
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Peer review loading */}
+      {stage2Loading && (
+        <div className="text-[10px] text-dim animate-pulse mb-2 tracking-[1px] uppercase">
+          ◈ Peer review in progress — analysts reviewing each other anonymously…
         </div>
       )}
 

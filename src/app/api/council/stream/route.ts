@@ -4,7 +4,7 @@ import { council_verdict_cache } from "@/db/schema";
 import { and, eq, gte } from "drizzle-orm";
 import Anthropic from "@anthropic-ai/sdk";
 import { buildContext } from "@/lib/council/context";
-import { getRoles, runAgent } from "@/lib/council/agents";
+import { getRoles, runAgent, runPeerReview } from "@/lib/council/agents";
 import { synthesizeVerdict } from "@/lib/council/synthesize";
 import type { AssetClass, StreamEvent, Verdict } from "@/lib/council/types";
 
@@ -73,6 +73,7 @@ export async function POST(req: Request) {
             tradeLevels?: Verdict["tradeLevels"];
             currency?: string;
             laymanExplanation?: Verdict["laymanExplanation"];
+            aggregateRankings?: Verdict["aggregateRankings"];
           };
           const verdict: Verdict = {
             verdict: row.verdict as Verdict["verdict"],
@@ -83,6 +84,7 @@ export async function POST(req: Request) {
             tradeLevels: payload.tradeLevels ?? null,
             currency: payload.currency ?? "USD",
             laymanExplanation: payload.laymanExplanation ?? null,
+            aggregateRankings: payload.aggregateRankings ?? undefined,
           };
           emit({ type: "verdict", data: verdict });
           controller.close();
@@ -105,9 +107,17 @@ export async function POST(req: Request) {
         // Emit each agent result as it completes
         agentResults.forEach((result) => emit({ type: "agent_done", result }));
 
-        // Synthesize
+        // Stage 2: Peer review (anonymized)
+        emit({ type: "stage2_start" });
+        const { peerRankings, aggregateRankings } = await runPeerReview(agentResults, anthropic);
+        for (const pr of peerRankings) {
+          emit({ type: "stage2_peer_done", reviewerRole: pr.reviewerRole, rankedOrder: pr.rankedOrder });
+        }
+        emit({ type: "stage2_complete", aggregateRankings });
+
+        // Stage 3: Synthesize
         emit({ type: "synth_start" });
-        const verdict = await synthesizeVerdict(agentResults, ctx, anthropic);
+        const verdict = await synthesizeVerdict(agentResults, ctx, anthropic, aggregateRankings);
 
         // Insert fresh cache row (old rows filtered by fetched_at cutoff in reads)
         await db.insert(council_verdict_cache).values({
@@ -122,6 +132,7 @@ export async function POST(req: Request) {
             tradeLevels: verdict.tradeLevels,
             currency: verdict.currency,
             laymanExplanation: verdict.laymanExplanation,
+            aggregateRankings: verdict.aggregateRankings ?? null,
           } as Record<string, unknown>,
           fetched_at: new Date(),
         });

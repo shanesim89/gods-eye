@@ -1,7 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { currencySymbol } from "@/lib/format";
-import type { AssetClass, AgentResult, Signal, CouncilContext } from "./types";
+import type { AssetClass, AgentResult, Signal, CouncilContext, PeerRanking, AggregateRanking } from "./types";
 
 const HAIKU = "claude-haiku-4-5-20251001";
 
@@ -159,6 +159,154 @@ const RECORD_THESIS_TOOL: Anthropic.Tool = {
     required: ["signal", "confidence", "thesis", "keyPoints"],
   },
 };
+
+// ─── Peer-review (Stage 2) ───────────────────────────────────────────────────
+
+const SUBMIT_PEER_RANKING_TOOL: Anthropic.Tool = {
+  name: "submit_peer_ranking",
+  description: "Submit your anonymous ranking of all 5 analyst reports by reasoning quality.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      rankedLabels: {
+        type: "array" as const,
+        items: { type: "string" as const },
+        minItems: 5,
+        maxItems: 5,
+        description: "The 5 analyst labels (e.g. 'Analyst A') ordered best reasoning (rank 1) to weakest (rank 5).",
+      },
+      reasoning: {
+        type: "object" as const,
+        description: "One-sentence reason per analyst label (keys = 'Analyst A' … 'Analyst E').",
+        additionalProperties: { type: "string" as const },
+      },
+    },
+    required: ["rankedLabels", "reasoning"],
+  },
+};
+
+const ANALYST_LABELS = ["Analyst A", "Analyst B", "Analyst C", "Analyst D", "Analyst E"];
+
+export function computeAggregateRankings(
+  peerRankings: PeerRanking[],
+  allRoles: string[]
+): AggregateRanking[] {
+  const rankSums: Record<string, number> = {};
+  const rankCounts: Record<string, number> = {};
+  const topVotes: Record<string, number> = {};
+
+  for (const role of allRoles) {
+    rankSums[role] = 0;
+    rankCounts[role] = 0;
+    topVotes[role] = 0;
+  }
+
+  for (const pr of peerRankings) {
+    pr.rankedOrder.forEach((role, idx) => {
+      if (!(role in rankSums)) return; // skip unknown roles
+      rankSums[role] += idx + 1; // 1-indexed
+      rankCounts[role] += 1;
+      if (idx === 0) topVotes[role] += 1;
+    });
+  }
+
+  return allRoles
+    .map((role) => ({
+      role,
+      avgRank: rankCounts[role] > 0 ? rankSums[role] / rankCounts[role] : 3.0,
+      topVotes: topVotes[role],
+    }))
+    .sort((a, b) => a.avgRank - b.avgRank);
+}
+
+export async function runPeerReview(
+  agentResults: AgentResult[],
+  anthropic: Anthropic
+): Promise<{ peerRankings: PeerRanking[]; aggregateRankings: AggregateRanking[] }> {
+  const roles = agentResults.map((a) => a.role);
+
+  // One shared shuffle — all reviewers see the same label-to-role mapping
+  const shuffled = [...roles].sort(() => Math.random() - 0.5);
+  const labelToRole: Record<string, string> = {};
+  const roleToLabel: Record<string, string> = {};
+  shuffled.forEach((role, i) => {
+    labelToRole[ANALYST_LABELS[i]] = role;
+    roleToLabel[role] = ANALYST_LABELS[i];
+  });
+
+  // Build the anonymous thesis block (same for every reviewer)
+  const thesisBlock = shuffled
+    .map((role, i) => {
+      const agent = agentResults.find((a) => a.role === role)!;
+      const pts = (Array.isArray(agent.keyPoints) ? agent.keyPoints : []).slice(0, 3).join("; ");
+      return `${ANALYST_LABELS[i]}:\nThesis: ${agent.thesis}\nKey points: ${pts}`;
+    })
+    .join("\n\n");
+
+  const systemPrompt = `You are a senior investment analyst conducting a blind peer review.
+You are evaluating the QUALITY OF REASONING in 5 anonymous analyst reports.
+Do NOT rank based on whether you agree with the signal — judge reasoning clarity, data usage, and logical coherence only.
+
+${thesisBlock}
+
+Rank all 5 analysts from best (rank 1) to weakest (rank 5) reasoning quality.
+Call submit_peer_ranking with rankedLabels (ordered list, best first) and a one-sentence reasoning for each analyst.`;
+
+  const peerRankings = await Promise.all(
+    agentResults.map(async (reviewer): Promise<PeerRanking> => {
+      try {
+        const response = await anthropic.messages.create({
+          model: HAIKU,
+          max_tokens: 384,
+          system: systemPrompt,
+          tools: [SUBMIT_PEER_RANKING_TOOL],
+          tool_choice: { type: "any" },
+          messages: [
+            {
+              role: "user",
+              content: `You are the ${reviewer.role} analyst. Rank all 5 analyses by reasoning quality and call submit_peer_ranking.`,
+            },
+          ],
+        });
+
+        const toolUse = response.content.find((b) => b.type === "tool_use");
+        if (toolUse?.type === "tool_use") {
+          const input = toolUse.input as {
+            rankedLabels?: string[];
+            reasoning?: Record<string, string>;
+          };
+          const rawLabels = Array.isArray(input.rankedLabels) ? input.rankedLabels : [];
+          // De-anonymize: convert labels back to roles
+          const rankedOrder = rawLabels
+            .filter((lbl) => lbl in labelToRole)
+            .map((lbl) => labelToRole[lbl]);
+          // Fill any missing roles at the end (neutral fallback)
+          for (const role of roles) {
+            if (!rankedOrder.includes(role)) rankedOrder.push(role);
+          }
+          // Re-key reasoning from labels to roles
+          const reasoning: Record<string, string> = {};
+          for (const [lbl, reason] of Object.entries(input.reasoning ?? {})) {
+            if (lbl in labelToRole) reasoning[labelToRole[lbl]] = reason;
+          }
+          return { reviewerRole: reviewer.role, rankedOrder, reasoning };
+        }
+
+        // Fallback: neutral order
+        return { reviewerRole: reviewer.role, rankedOrder: [...roles], reasoning: {} };
+      } catch {
+        return { reviewerRole: reviewer.role, rankedOrder: [...roles], reasoning: {} };
+      }
+    })
+  );
+
+  return {
+    peerRankings,
+    aggregateRankings: computeAggregateRankings(peerRankings, roles),
+  };
+}
+
+// ─── Stage-1 agent ───────────────────────────────────────────────────────────
 
 export async function runAgent(
   role: string,

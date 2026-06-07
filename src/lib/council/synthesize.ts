@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { currencySymbol } from "@/lib/format";
 import type {
   AgentResult,
+  AggregateRanking,
   CouncilContext,
   LaymanExplanation,
   PriceRange,
@@ -222,10 +223,23 @@ function validateLevels(verdict: VerdictType, t: TradeLevels | undefined | null)
   return t;
 }
 
+function buildPeerConsensusBlock(aggregateRankings: AggregateRanking[]): string {
+  const lines = ["PEER CONSENSUS (anonymized blind ranking — all analysts rated each other's reasoning quality):"];
+  aggregateRankings.forEach((ar, i) => {
+    const tag =
+      i === 0 ? "  ← PEER #1 (most credible reasoning)" :
+      i === aggregateRankings.length - 1 ? "  ← PEER LAST (weakest reasoning)" : "";
+    lines.push(`  ${i + 1}. ${ar.role} — avg rank ${ar.avgRank.toFixed(1)}, #1 votes: ${ar.topVotes}${tag}`);
+  });
+  lines.push("When signals conflict, weight the most peer-endorsed analysis more heavily.");
+  return lines.join("\n");
+}
+
 export async function synthesizeVerdict(
   agents: AgentResult[],
   ctx: CouncilContext,
-  anthropic: Anthropic
+  anthropic: Anthropic,
+  aggregateRankings?: AggregateRanking[]
 ): Promise<Verdict> {
   const weights: Record<string, number> = {
     TECHNICAL: 0.20,
@@ -237,6 +251,14 @@ export async function synthesizeVerdict(
     RISK: 0.25,
     FORECAST: 0.15,  // experimental — modest weight until hit-rate validated
   };
+
+  // Apply peer-review weight adjustments: top-ranked +10%, bottom-ranked -5%
+  if (aggregateRankings && aggregateRankings.length > 0) {
+    const best  = aggregateRankings[0].role;
+    const worst = aggregateRankings[aggregateRankings.length - 1].role;
+    if (best  in weights) weights[best]  = +(weights[best]  * 1.10).toFixed(3);
+    if (worst in weights) weights[worst] = +(weights[worst] * 0.95).toFixed(3);
+  }
 
   const agentSummary = agents
     .map((a) => {
@@ -255,6 +277,7 @@ ${(Array.isArray(a.keyPoints) ? a.keyPoints : []).map((p) => `- ${p}`).join("\n"
   const priceDec = ctx.price < 1 ? 4 : 2;
   const cur = currencySymbol(ctx.currency);
   const extraContext = [fundBlock, analystBlock, kronosBlock].filter(Boolean).join("\n\n");
+  const peerBlock = aggregateRankings?.length ? buildPeerConsensusBlock(aggregateRankings) : null;
 
   const systemPrompt = `You are the CHIEF INVESTMENT OFFICER of the Investment Council.
 You must synthesize the analyses from 4 specialist agents into a single BUY / HOLD / SELL verdict for ${ctx.ticker}.
@@ -279,7 +302,7 @@ VERDICTS:
 
 REFERENCE LEVELS (use these to ground your trade levels — do NOT invent prices):
 ${refBlock}
-${extraContext ? `\n${extraContext}\n\nWeigh fundamentals against price action. If the analyst mean target diverges from your trade levels by more than 20%, address the divergence explicitly in your summary.\n` : ""}
+${extraContext ? `\n${extraContext}\n\nWeigh fundamentals against price action. If the analyst mean target diverges from your trade levels by more than 20%, address the divergence explicitly in your summary.\n` : ""}${peerBlock ? `\n${peerBlock}\n` : ""}
 TRADE LEVEL RULES:
 - BUY: entry near current or pullback to MA20/MA50; target = next resistance (90d high, 52W high); stop below recent swing low (10–15% below entry low)
 - SELL: entry near current or rally to MA20/MA50; target = next support (90d low, 52W low); stop above recent swing high
@@ -384,6 +407,7 @@ Call emit_verdict with your synthesized judgment, trade levels, AND laymanExplan
         tradeLevels,
         currency: ctx.currency,
         laymanExplanation,
+        aggregateRankings: aggregateRankings ?? undefined,
       };
     }
 
@@ -396,6 +420,7 @@ Call emit_verdict with your synthesized judgment, trade levels, AND laymanExplan
       tradeLevels: null,
       currency: ctx.currency,
       laymanExplanation: null,
+      aggregateRankings: aggregateRankings ?? undefined,
     };
   } catch (err) {
     return {
@@ -407,6 +432,7 @@ Call emit_verdict with your synthesized judgment, trade levels, AND laymanExplan
       tradeLevels: null,
       currency: ctx.currency,
       laymanExplanation: null,
+      aggregateRankings: aggregateRankings ?? undefined,
     };
   }
 }
