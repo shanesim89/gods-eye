@@ -202,6 +202,7 @@ export async function buildContext(
         datetime: n.datetime,
       })) ?? null,
       analyst: buildAnalystBlock(summary, quote?.c || yahoo?.price || 0),
+      nextEarningsDate: summary?.nextEarningsDate ?? null,
       lunarcrush: lcData,
       kronos: kronosData,
     };
@@ -362,6 +363,7 @@ export async function buildContext(
           : null,
       optionsMeta,
       analyst: buildAnalystBlock(summary, underlyingPrice),
+      nextEarningsDate: summary?.nextEarningsDate ?? null,
       lunarcrush: lcData,
     };
   }

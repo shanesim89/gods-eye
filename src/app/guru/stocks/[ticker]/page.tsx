@@ -8,7 +8,7 @@ import {
   getBasicFinancials,
   getCompanyNews,
 } from "@/lib/finnhub";
-import { getYahooData, getYahooSummary } from "@/lib/yahoo";
+import { getYahooData, getYahooSummary, type EpsQuarter } from "@/lib/yahoo";
 import { AnalystCard } from "../../_components/AnalystCard";
 import { PriceChart } from "./PriceChart";
 import { TickerSearch } from "../../_components/TickerSearch";
@@ -25,6 +25,29 @@ function fmtCap(millions: number | undefined | null, prefix = "$"): string {
   if (millions >= 1_000_000) return `${prefix}${(millions / 1_000_000).toFixed(2)}T`;
   if (millions >= 1_000) return `${prefix}${(millions / 1_000).toFixed(2)}B`;
   return `${prefix}${millions.toFixed(0)}M`;
+}
+
+function fmtBig(v: number | undefined | null, prefix = "$"): string {
+  if (v == null || !Number.isFinite(v) || v === 0) return "—";
+  if (Math.abs(v) >= 1e12) return `${prefix}${(v / 1e12).toFixed(2)}T`;
+  if (Math.abs(v) >= 1e9)  return `${prefix}${(v / 1e9).toFixed(2)}B`;
+  if (Math.abs(v) >= 1e6)  return `${prefix}${(v / 1e6).toFixed(2)}M`;
+  return `${prefix}${v.toFixed(0)}`;
+}
+
+function pct(v: number | undefined | null, dec = 1): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  const sign = v > 0 ? "+" : "";
+  return `${sign}${v.toFixed(dec)}%`;
+}
+
+function pctPlain(v: number | undefined | null, dec = 1): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return `${v.toFixed(dec)}%`;
+}
+
+function daysUntil(isoDate: string): number {
+  return Math.round((new Date(isoDate).getTime() - Date.now()) / 86400000);
 }
 
 export default async function StockPage({
@@ -85,21 +108,59 @@ export default async function StockPage({
         }))
       : [];
 
-  const metrics: [string, string][] = [
-    ["PREV CLOSE",   n(prevClose, 2, cur)],
-    ["OPEN",         n(open, 2, cur)],
-    ["DAY HIGH",     n(dayHigh, 2, cur)],
-    ["DAY LOW",      n(dayLow, 2, cur)],
-    ["52W HIGH",     n(wk52High, 2, cur)],
-    ["52W LOW",      n(wk52Low, 2, cur)],
-    ["MKT CAP",      fmtCap(profile?.marketCapitalization, cur)],
-    ["P/E",          n(fin?.peNormalizedAnnual, 1)],
-    ["EPS (TTM)",    n(fin?.epsTTM, 2, cur)],
-    ["BETA",         n(fin?.beta, 2)],
-    ["DIV YIELD",    fin?.dividendYieldIndicatedAnnual ? `${n(fin.dividendYieldIndicatedAnnual, 2)}%` : "—"],
-    ["ROE (TTM)",    fin?.roeTTM ? `${n(fin.roeTTM, 1)}%` : "—"],
-    ["PROFIT MGN",   fin?.netProfitMarginTTM ? `${n(fin.netProfitMarginTTM, 1)}%` : "—"],
-    ["DEBT/EQ",      n(fin?.totalDebt_totalEquityQuarterly, 2)],
+  // Price panel metrics (narrow sidebar)
+  const priceMetrics: [string, string][] = [
+    ["PREV CLOSE",  n(prevClose, 2, cur)],
+    ["OPEN",        n(open, 2, cur)],
+    ["DAY HIGH",    n(dayHigh, 2, cur)],
+    ["DAY LOW",     n(dayLow, 2, cur)],
+    ["52W HIGH",    n(wk52High, 2, cur)],
+    ["52W LOW",     n(wk52Low, 2, cur)],
+    ["MKT CAP",     fmtCap(profile?.marketCapitalization ?? (summary?.sharesOutstanding && price ? summary.sharesOutstanding * price / 1e9 * 1e3 : null), cur)],
+    ["VOLUME",      summary?.sharesOutstanding ? "—" : "—"],
+    ["BETA",        n(fin?.beta ?? summary?.beta, 2)],
+  ];
+
+  // Valuation column
+  const valuationMetrics: [string, string][] = [
+    ["P/E (TTM)",   n(fin?.peNormalizedAnnual ?? summary?.peTTM, 1)],
+    ["P/E (FWD)",   n(fin?.peForward ?? summary?.peForward, 1)],
+    ["EPS (TTM)",   n(fin?.epsTTM ?? summary?.epsTTM, 2, cur)],
+    ["EPS (FWD)",   n(fin?.epsForward ?? summary?.epsForward, 2, cur)],
+    ["PEG RATIO",   n(summary?.pegRatio, 2)],
+    ["P/BOOK",      n(summary?.priceToBook, 2)],
+    ["P/SALES",     n(summary?.priceToSales, 2)],
+    ["EV/EBITDA",   n(summary?.evToEbitda, 1)],
+    ["EV/REVENUE",  n(summary?.evToRevenue, 2)],
+    ["EV",          fmtBig(summary?.enterpriseValue, cur)],
+  ];
+
+  // Profitability column
+  const profitMetrics: [string, string][] = [
+    ["GROSS MGN",   pctPlain(summary?.grossMargins)],
+    ["OPER MGN",    pctPlain(summary?.operatingMargin)],
+    ["PROFIT MGN",  pctPlain(fin?.netProfitMarginTTM ?? summary?.profitMargin)],
+    ["EBITDA MGN",  pctPlain(summary?.ebitdaMargins)],
+    ["ROE (TTM)",   pctPlain(fin?.roeTTM ?? summary?.roe)],
+    ["ROA (TTM)",   pctPlain(summary?.roa)],
+    ["DEBT/EQ",     n(fin?.totalDebt_totalEquityQuarterly ?? summary?.debtToEquity, 2)],
+    ["CURRENT R.",  n(summary?.currentRatio, 2)],
+    ["QUICK R.",    n(summary?.quickRatio, 2)],
+    ["EBITDA",      fmtBig(summary?.ebitda, cur)],
+  ];
+
+  // Growth + structure column
+  const growthMetrics: [string, string, boolean?][] = [
+    ["REV GROWTH",  pct(summary?.revenueGrowth)],
+    ["EPS GROWTH",  pct(summary?.earningsGrowth)],
+    ["FREE CF",     fmtBig(summary?.freeCashflow, cur)],
+    ["OPER CF",     fmtBig(summary?.operatingCashflow, cur)],
+    ["REVENUE",     fmtBig(summary?.totalRevenue, cur)],
+    ["GROSS PROF",  fmtBig(summary?.grossProfits, cur)],
+    ["DIV YIELD",   pctPlain(fin?.dividendYieldIndicatedAnnual ?? summary?.dividendYield)],
+    ["SHORT RATIO", summary?.shortRatio != null ? `${n(summary.shortRatio, 1)}d` : "—"],
+    ["INSIDER %",   pctPlain(summary?.heldByInsiders)],
+    ["INST %",      pctPlain(summary?.heldByInstitutions)],
   ];
 
   const valid = price > 0;
@@ -164,17 +225,32 @@ export default async function StockPage({
         <TickerSearch assetClass="stocks" currentTicker={symbol} />
       </div>
 
-      {/* Chart + Metrics */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_230px] gap-3 mb-3">
+      {/* Next Earnings Banner */}
+      {summary?.nextEarningsDate && (() => {
+        const d = daysUntil(summary.nextEarningsDate!);
+        const label = d > 0 ? `in ${d} day${d === 1 ? "" : "s"}` : d === 0 ? "today" : `${Math.abs(d)}d ago`;
+        const urgency = d >= 0 && d <= 7 ? "border-red/60 text-red bg-red/5" : d >= 0 && d <= 30 ? "border-amber/60 text-amber bg-amber/5" : "border-border text-dim";
+        return (
+          <div className={`border ${urgency} px-3 py-1.5 mb-3 flex items-center gap-3 text-[10px] uppercase tracking-[1px]`}>
+            <span>◈ NEXT EARNINGS</span>
+            <span className="font-bold tabular-nums">{summary.nextEarningsDate}</span>
+            <span>({label})</span>
+            {summary.nextEarningsDateIsEstimate && <span className="text-dim normal-case tracking-normal italic">est.</span>}
+          </div>
+        );
+      })()}
+
+      {/* Chart + Price Metrics */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_200px] gap-3 mb-3">
         <div className="border border-border bg-grid p-3">
           <div className="text-muted text-[10px] mb-2 uppercase tracking-[1px]">90-DAY PRICE · DAILY</div>
           <PriceChart data={chartData} currency={cur} />
         </div>
         <div className="border border-border bg-grid p-3">
-          <div className="text-muted text-[10px] mb-2 uppercase tracking-[1px]">KEY METRICS</div>
+          <div className="text-muted text-[10px] mb-2 uppercase tracking-[1px]">PRICE / MARKET</div>
           <table className="w-full text-[11px]">
             <tbody>
-              {metrics.map(([k, v]) => (
+              {priceMetrics.map(([k, v]) => (
                 <tr key={k} className="dotted-row">
                   <td className="py-0.5 text-muted pr-3 whitespace-nowrap">{k}</td>
                   <td className="py-0.5 text-right text-amber tabular-nums">{v}</td>
@@ -184,6 +260,96 @@ export default async function StockPage({
           </table>
         </div>
       </div>
+
+      {/* Extended Fundamentals Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+        {/* Valuation */}
+        <div className="border border-border bg-grid p-3">
+          <div className="text-muted text-[10px] mb-2 uppercase tracking-[1px]">VALUATION</div>
+          <table className="w-full text-[11px]">
+            <tbody>
+              {valuationMetrics.map(([k, v]) => (
+                <tr key={k} className="dotted-row">
+                  <td className="py-0.5 text-muted pr-2 whitespace-nowrap text-[10px]">{k}</td>
+                  <td className="py-0.5 text-right text-amber tabular-nums">{v}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {/* Profitability */}
+        <div className="border border-border bg-grid p-3">
+          <div className="text-muted text-[10px] mb-2 uppercase tracking-[1px]">PROFITABILITY</div>
+          <table className="w-full text-[11px]">
+            <tbody>
+              {profitMetrics.map(([k, v]) => (
+                <tr key={k} className="dotted-row">
+                  <td className="py-0.5 text-muted pr-2 whitespace-nowrap text-[10px]">{k}</td>
+                  <td className="py-0.5 text-right text-amber tabular-nums">{v}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {/* Growth & Structure */}
+        <div className="border border-border bg-grid p-3">
+          <div className="text-muted text-[10px] mb-2 uppercase tracking-[1px]">GROWTH & STRUCTURE</div>
+          <table className="w-full text-[11px]">
+            <tbody>
+              {growthMetrics.map(([k, v]) => {
+                const isGrowth = k.includes("GROWTH");
+                const isNeg = isGrowth && v.startsWith("-");
+                const isPos = isGrowth && v.startsWith("+");
+                return (
+                  <tr key={k} className="dotted-row">
+                    <td className="py-0.5 text-muted pr-2 whitespace-nowrap text-[10px]">{k}</td>
+                    <td className={`py-0.5 text-right tabular-nums ${isPos ? "text-green" : isNeg ? "text-red" : "text-amber"}`}>{v}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* EPS Surprise History */}
+      {summary?.epsHistory && summary.epsHistory.length > 0 && (
+        <div className="border border-border bg-grid p-3 mb-3">
+          <div className="text-muted text-[10px] mb-2 uppercase tracking-[1px]">EPS HISTORY · QUARTERLY</div>
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr>
+                <th className="text-left text-muted font-normal pb-1 text-[10px] uppercase tracking-[0.5px]">Quarter</th>
+                <th className="text-right text-muted font-normal pb-1 text-[10px] uppercase tracking-[0.5px]">Estimate</th>
+                <th className="text-right text-muted font-normal pb-1 text-[10px] uppercase tracking-[0.5px]">Actual</th>
+                <th className="text-right text-muted font-normal pb-1 text-[10px] uppercase tracking-[0.5px]">Surprise</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(summary.epsHistory as EpsQuarter[]).map((q) => {
+                const beat = q.surprisePct != null && q.surprisePct > 0;
+                const miss = q.surprisePct != null && q.surprisePct < 0;
+                return (
+                  <tr key={q.quarter} className="dotted-row">
+                    <td className="py-0.5 text-text font-mono">{q.quarter}</td>
+                    <td className="py-0.5 text-right text-dim tabular-nums">
+                      {q.estimate != null ? `$${q.estimate.toFixed(2)}` : "—"}
+                    </td>
+                    <td className="py-0.5 text-right text-amber tabular-nums">
+                      {q.actual != null ? `$${q.actual.toFixed(2)}` : <span className="text-dim italic">upcoming</span>}
+                    </td>
+                    <td className={`py-0.5 text-right tabular-nums font-bold ${beat ? "text-green" : miss ? "text-red" : "text-dim"}`}>
+                      {q.surprisePct != null
+                        ? `${q.surprisePct > 0 ? "+" : ""}${q.surprisePct.toFixed(1)}%`
+                        : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Analyst consensus */}
       <AnalystCard summary={summary} price={price} currency={ccy} currencySymbol={cur} />

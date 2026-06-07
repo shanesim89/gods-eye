@@ -29,8 +29,44 @@ Current price: ${cur}${ctx.price.toFixed(2)} ${ctx.currency} (${ctx.changePct >=
 
   if (ctx.financials && Object.keys(ctx.financials).length > 0) {
     const fin = ctx.financials;
-    const f = (k: string) => fin[k] != null ? String(fin[k]) : "n/a";
-    extras.push(`Financials: P/E=${f("peNormalizedAnnual")} | EPS(TTM)=${f("epsTTM")} | Beta=${f("beta")} | ROE=${f("roeTTM")} | Profit Margin=${f("netProfitMarginTTM")} | Debt/Eq=${f("totalDebt_totalEquityQuarterly")} | 52W High=${cur}${f("52WeekHigh")} | 52W Low=${cur}${f("52WeekLow")}`);
+    const fNum = (k: string, dec = 2) => {
+      const v = fin[k];
+      return v != null && Number.isFinite(v) ? Number(v).toFixed(dec) : "n/a";
+    };
+    const fPct = (k: string) => {
+      const v = fin[k];
+      return v != null && Number.isFinite(v) ? `${Number(v).toFixed(1)}%` : "n/a";
+    };
+    const fMoney = (k: string) => {
+      const v = fin[k];
+      if (v == null || !Number.isFinite(v)) return "n/a";
+      const n = Number(v);
+      if (Math.abs(n) >= 1e12) return `${cur}${(n / 1e12).toFixed(2)}T`;
+      if (Math.abs(n) >= 1e9)  return `${cur}${(n / 1e9).toFixed(2)}B`;
+      if (Math.abs(n) >= 1e6)  return `${cur}${(n / 1e6).toFixed(2)}M`;
+      return `${cur}${n.toFixed(0)}`;
+    };
+    // Valuation block
+    extras.push(
+      `Valuation: P/E(TTM)=${fNum("peNormalizedAnnual", 1)} | P/E(Fwd)=${fNum("peForward", 1)} | EPS(TTM)=${cur}${fNum("epsTTM")} | EPS(Fwd)=${cur}${fNum("epsForward")} | PEG=${fNum("pegRatio", 2)} | P/B=${fNum("priceToBook", 2)} | P/S=${fNum("priceToSales", 2)} | EV/EBITDA=${fNum("evToEbitda", 1)} | EV/Rev=${fNum("evToRevenue", 2)}`
+    );
+    // Profitability block
+    extras.push(
+      `Profitability: Gross Mgn=${fPct("grossMarginTTM")} | Profit Mgn=${fPct("netProfitMarginTTM")} | Oper Mgn=${fPct("operatingMarginTTM")} | EBITDA Mgn=${fPct("ebitdaMarginTTM")} | ROE=${fPct("roeTTM")} | ROA=${fPct("roaTTM")} | D/E=${fNum("totalDebt_totalEquityQuarterly")} | Quick=${fNum("quickRatio", 2)} | Beta=${fNum("beta", 2)}`
+    );
+    // Growth + ownership block
+    extras.push(
+      `Growth: Rev Growth YoY=${fPct("revenueGrowthYoYPct")} | EPS Growth YoY=${fPct("earningsGrowthYoYPct")} | Short Ratio=${fNum("shortRatio", 1)}d | Insider=${fPct("heldByInsidersPct")} | Institutional=${fPct("heldByInstitutionsPct")}`
+    );
+    // 52-week range
+    extras.push(`52W High=${cur}${fNum("52WeekHigh")} | 52W Low=${cur}${fNum("52WeekLow")} | Div Yield=${fPct("dividendYieldIndicatedAnnual")}`);
+  }
+
+  // Next earnings date (high relevance for SENTIMENT/MACRO agents)
+  if (ctx.nextEarningsDate) {
+    const daysUntil = Math.round((new Date(ctx.nextEarningsDate).getTime() - Date.now()) / 86400000);
+    const urgency = daysUntil <= 7 ? " ← IMMINENT" : daysUntil <= 30 ? " ← upcoming" : "";
+    extras.push(`Next earnings: ${ctx.nextEarningsDate} (${daysUntil > 0 ? `in ${daysUntil} days` : `${Math.abs(daysUntil)} days ago`})${urgency}`);
   }
 
   if (ctx.candles) {

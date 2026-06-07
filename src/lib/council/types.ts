@@ -112,6 +112,8 @@ export type CouncilContext = {
     industry: string | null;
     trend: { strongBuy: number; buy: number; hold: number; sell: number; strongSell: number } | null;
   } | null;
+  // Upcoming earnings date (stocks/etf from Yahoo calendarEvents)
+  nextEarningsDate?: string | null; // ISO "YYYY-MM-DD" or null
   // LunarCrush sentiment (all classes)
   lunarcrush?: {
     galaxyScore: number | null;

@@ -6,7 +6,7 @@ import type { StockCandles } from "./finnhub";
 
 const CHART_BASE = "https://query1.finance.yahoo.com/v8/finance/chart";
 const SUMMARY_BASE = "https://query1.finance.yahoo.com/v10/finance/quoteSummary";
-const SUMMARY_MODULES = "summaryDetail,defaultKeyStatistics,financialData,assetProfile,recommendationTrend";
+const SUMMARY_MODULES = "summaryDetail,defaultKeyStatistics,financialData,assetProfile,recommendationTrend,calendarEvents,earnings";
 
 export type YahooData = {
   symbol: string;
@@ -157,6 +157,13 @@ export type YahooRecTrend = {
   strongSell: number;
 };
 
+export type EpsQuarter = {
+  quarter: string;           // e.g. "3Q2024"
+  estimate: number | null;
+  actual: number | null;
+  surprisePct: number | null; // ((actual - estimate) / |estimate|) × 100
+};
+
 export type YahooSummary = {
   // Valuation
   peTTM: number | null;
@@ -167,17 +174,41 @@ export type YahooSummary = {
   epsTTM: number | null;
   epsForward: number | null;
   beta: number | null;
+  // EV multiples (new)
+  enterpriseValue: number | null;   // absolute $
+  evToRevenue: number | null;
+  evToEbitda: number | null;
   // Profitability / leverage
-  roe: number | null;            // percent
-  roa: number | null;            // percent
-  profitMargin: number | null;   // percent
-  operatingMargin: number | null; // percent
+  roe: number | null;               // percent
+  roa: number | null;               // percent
+  profitMargin: number | null;      // percent
+  operatingMargin: number | null;   // percent
+  grossMargins: number | null;      // percent (new)
+  ebitdaMargins: number | null;     // percent (new)
+  ebitda: number | null;            // absolute $ (new)
   debtToEquity: number | null;
   currentRatio: number | null;
-  // Income
-  dividendYield: number | null;  // percent
+  quickRatio: number | null;        // new
+  // Income / cashflow (new)
+  totalRevenue: number | null;      // absolute $
+  grossProfits: number | null;      // absolute $
+  freeCashflow: number | null;      // absolute $
+  operatingCashflow: number | null; // absolute $
+  totalCash: number | null;         // absolute $
+  revenuePerShare: number | null;
+  // Growth (new)
+  revenueGrowth: number | null;     // percent YoY
+  earningsGrowth: number | null;    // percent YoY
+  // Ownership (new)
+  shortRatio: number | null;        // days to cover
+  sharesOutstanding: number | null; // absolute
+  floatShares: number | null;       // absolute
+  heldByInsiders: number | null;    // percent
+  heldByInstitutions: number | null;// percent
+  // Dividends
+  dividendYield: number | null;     // percent
   dividendRate: number | null;
-  payoutRatio: number | null;    // percent
+  payoutRatio: number | null;       // percent
   // Profile
   sector: string | null;
   industry: string | null;
@@ -190,6 +221,10 @@ export type YahooSummary = {
   recommendationMean: number | null;  // 1=Strong Buy ... 5=Sell
   recommendationKey: string | null;   // "buy" | "hold" | ...
   recommendationTrend: YahooRecTrend[] | null;
+  // Earnings calendar (new)
+  nextEarningsDate: string | null;  // ISO date, e.g. "2025-07-30"
+  nextEarningsDateIsEstimate: boolean;
+  epsHistory: EpsQuarter[] | null;  // last 4 quarters
 };
 
 type RawValue = { raw?: number; fmt?: string } | number | string | null | undefined;
@@ -215,6 +250,21 @@ type QuoteSummaryResponse = {
       financialData?: Record<string, RawValue>;
       assetProfile?: Record<string, unknown>;
       recommendationTrend?: { trend?: Array<Record<string, RawValue>> };
+      calendarEvents?: {
+        earnings?: {
+          earningsDate?: Array<{ raw?: number; fmt?: string }>;
+          isEarningsDateEstimate?: boolean;
+        };
+      };
+      earnings?: {
+        earningsChart?: {
+          quarterly?: Array<{
+            date?: string;
+            actual?: RawValue;
+            estimate?: RawValue;
+          }>;
+        };
+      };
     }>;
     error?: unknown;
   };
@@ -311,6 +361,8 @@ async function fetchYahooSummary(symbol: string): Promise<YahooSummary | null> {
     const fd = res.financialData ?? {};
     const ap = res.assetProfile ?? {};
     const rt = res.recommendationTrend?.trend ?? [];
+    const ce = res.calendarEvents;
+    const er = res.earnings;
 
     // Yahoo returns ratios as fractions (0.25 = 25%) for ROE / margins / divYield / payoutRatio.
     const pct = (v: RawValue): number | null => {
@@ -329,7 +381,27 @@ async function fetchYahooSummary(symbol: string): Promise<YahooSummary | null> {
       }))
       .filter((t) => t.period.length > 0);
 
+    // Next earnings date from calendarEvents
+    const earningsDateEntry = ce?.earnings?.earningsDate?.[0];
+    const nextEarningsDate = earningsDateEntry?.fmt ?? null;
+    const nextEarningsDateIsEstimate = ce?.earnings?.isEarningsDateEstimate ?? true;
+
+    // EPS history from earnings chart (last 4 quarters)
+    const epsQuarterly = er?.earningsChart?.quarterly ?? [];
+    const epsHistory: EpsQuarter[] = epsQuarterly
+      .filter((q) => q.date)
+      .map((q) => {
+        const est = rawNum(q.estimate);
+        const act = rawNum(q.actual);
+        const surprisePct =
+          act != null && est != null && est !== 0
+            ? ((act - est) / Math.abs(est)) * 100
+            : null;
+        return { quarter: q.date!, estimate: est, actual: act, surprisePct };
+      });
+
     return {
+      // Valuation
       peTTM: rawNum(sd.trailingPE) ?? rawNum(ks.trailingPE),
       peForward: rawNum(sd.forwardPE) ?? rawNum(ks.forwardPE),
       pegRatio: rawNum(ks.pegRatio),
@@ -338,18 +410,46 @@ async function fetchYahooSummary(symbol: string): Promise<YahooSummary | null> {
       epsTTM: rawNum(ks.trailingEps),
       epsForward: rawNum(ks.forwardEps),
       beta: rawNum(sd.beta) ?? rawNum(ks.beta),
+      // EV multiples
+      enterpriseValue: rawNum(ks.enterpriseValue),
+      evToRevenue: rawNum(ks.enterpriseToRevenue),
+      evToEbitda: rawNum(ks.enterpriseToEbitda),
+      // Profitability
       roe: pct(fd.returnOnEquity),
       roa: pct(fd.returnOnAssets),
       profitMargin: pct(fd.profitMargins) ?? pct(ks.profitMargins),
       operatingMargin: pct(fd.operatingMargins),
+      grossMargins: pct(fd.grossMargins),
+      ebitdaMargins: pct(fd.ebitdaMargins),
+      ebitda: rawNum(fd.ebitda),
       debtToEquity: rawNum(fd.debtToEquity),
       currentRatio: rawNum(fd.currentRatio),
+      quickRatio: rawNum(fd.quickRatio),
+      // Income / cashflow
+      totalRevenue: rawNum(fd.totalRevenue),
+      grossProfits: rawNum(fd.grossProfits),
+      freeCashflow: rawNum(fd.freeCashflow),
+      operatingCashflow: rawNum(fd.operatingCashflow),
+      totalCash: rawNum(fd.totalCash),
+      revenuePerShare: rawNum(fd.revenuePerShare),
+      // Growth
+      revenueGrowth: pct(fd.revenueGrowth),
+      earningsGrowth: pct(fd.earningsGrowth),
+      // Ownership
+      shortRatio: rawNum(ks.shortRatio),
+      sharesOutstanding: rawNum(ks.sharesOutstanding),
+      floatShares: rawNum(ks.floatShares),
+      heldByInsiders: pct(ks.heldPercentInsiders),
+      heldByInstitutions: pct(ks.heldPercentInstitutions),
+      // Dividends
       dividendYield: pct(sd.dividendYield),
       dividendRate: rawNum(sd.dividendRate),
       payoutRatio: pct(sd.payoutRatio),
+      // Profile
       sector: rawStr(ap.sector),
       industry: rawStr(ap.industry),
       longBusinessSummary: rawStr(ap.longBusinessSummary),
+      // Analyst
       targetMeanPrice: rawNum(fd.targetMeanPrice),
       targetHighPrice: rawNum(fd.targetHighPrice),
       targetLowPrice: rawNum(fd.targetLowPrice),
@@ -357,6 +457,10 @@ async function fetchYahooSummary(symbol: string): Promise<YahooSummary | null> {
       recommendationMean: rawNum(fd.recommendationMean),
       recommendationKey: rawStr(fd.recommendationKey),
       recommendationTrend: trend.length ? trend : null,
+      // Earnings calendar
+      nextEarningsDate,
+      nextEarningsDateIsEstimate,
+      epsHistory: epsHistory.length ? epsHistory : null,
     };
   } catch {
     return null;
@@ -378,6 +482,7 @@ export function mergeYahooSummaryAsFinancials(
 ): Record<string, number | undefined> | null {
   if (!s && !yh) return null;
   const out: Record<string, number | undefined> = {};
+  // Existing fields (keep Finnhub-compatible names for backward compat)
   if (s?.peTTM != null) out.peNormalizedAnnual = s.peTTM;
   if (s?.epsTTM != null) out.epsTTM = s.epsTTM;
   if (s?.beta != null) out.beta = s.beta;
@@ -387,5 +492,24 @@ export function mergeYahooSummaryAsFinancials(
   if (s?.debtToEquity != null) out.totalDebt_totalEquityQuarterly = s.debtToEquity;
   if (yh?.week52High != null) out["52WeekHigh"] = yh.week52High;
   if (yh?.week52Low != null) out["52WeekLow"] = yh.week52Low;
+  // New fields
+  if (s?.peForward != null) out.peForward = s.peForward;
+  if (s?.epsForward != null) out.epsForward = s.epsForward;
+  if (s?.pegRatio != null) out.pegRatio = s.pegRatio;
+  if (s?.priceToBook != null) out.priceToBook = s.priceToBook;
+  if (s?.priceToSales != null) out.priceToSales = s.priceToSales;
+  if (s?.evToEbitda != null) out.evToEbitda = s.evToEbitda;
+  if (s?.evToRevenue != null) out.evToRevenue = s.evToRevenue;
+  if (s?.roa != null) out.roaTTM = s.roa;
+  if (s?.grossMargins != null) out.grossMarginTTM = s.grossMargins;
+  if (s?.ebitdaMargins != null) out.ebitdaMarginTTM = s.ebitdaMargins;
+  if (s?.operatingMargin != null) out.operatingMarginTTM = s.operatingMargin;
+  if (s?.quickRatio != null) out.quickRatio = s.quickRatio;
+  if (s?.currentRatio != null) out.currentRatio = s.currentRatio;
+  if (s?.revenueGrowth != null) out.revenueGrowthYoYPct = s.revenueGrowth;
+  if (s?.earningsGrowth != null) out.earningsGrowthYoYPct = s.earningsGrowth;
+  if (s?.shortRatio != null) out.shortRatio = s.shortRatio;
+  if (s?.heldByInsiders != null) out.heldByInsidersPct = s.heldByInsiders;
+  if (s?.heldByInstitutions != null) out.heldByInstitutionsPct = s.heldByInstitutions;
   return Object.keys(out).length ? out : null;
 }
