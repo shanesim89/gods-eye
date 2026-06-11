@@ -123,4 +123,6 @@ export type CouncilContext = {
   } | null;
   // Kronos foundation-model forecast (stocks/etf/crypto only, null if unavailable)
   kronos?: import("@/lib/kronos").KronosForecast | null;
+  // SEC EDGAR annual financials (US stocks/etf only, null if unavailable)
+  edgar?: import("@/lib/edgar").EdgarData | null;
 };
