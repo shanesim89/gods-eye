@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { AgentPanel } from "./AgentPanel";
+import { DirectiveCard } from "./DirectiveCard";
+import { resolveDirective, type Position } from "@/lib/council/directive";
 import { currencySymbol } from "@/lib/format";
 import type {
   AgentResult,
@@ -17,12 +19,9 @@ import type {
 type Props = {
   ticker: string;
   assetClass: AssetClass;
-};
-
-const VERDICT_COLORS = {
-  BUY:  { text: "text-green",  border: "border-green/60",  bg: "bg-green/10"  },
-  HOLD: { text: "text-amber",  border: "border-amber/60",  bg: "bg-amber/10"  },
-  SELL: { text: "text-red",    border: "border-red/60",    bg: "bg-red/10"    },
+  // Position context (optional — GURU pages pass these so guidance is position-aware).
+  currentPrice?: number | null;
+  position?: Position;
 };
 
 const STORAGE_KEY = (ticker: string, cls: AssetClass) =>
@@ -48,7 +47,7 @@ function saveCache(ticker: string, assetClass: AssetClass, v: Verdict) {
   } catch {/* ignore */}
 }
 
-export function CouncilCard({ ticker, assetClass }: Props) {
+export function CouncilCard({ ticker, assetClass, currentPrice = null, position = { held: false } }: Props) {
   const [roles, setRoles] = useState<string[]>([]);
   const [agentMap, setAgentMap] = useState<Record<string, AgentResult>>({});
   const [loadingRoles, setLoadingRoles] = useState<Set<string>>(new Set());
@@ -70,64 +69,7 @@ export function CouncilCard({ ticker, assetClass }: Props) {
     };
   }, []);
 
-  const convene = useCallback(async () => {
-    setRunning(true);
-    setError(null);
-    setVerdict(null);
-    setAgentMap({});
-    setLoadingRoles(new Set());
-    setRoles([]);
-    setSynthLoading(false);
-    setStage2Loading(false);
-    setAggregateRankings(null);
-
-    try {
-      const res = await fetch("/api/council/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker, assetClass }),
-      });
-
-      if (!res.ok || !res.body) {
-        // Clerk middleware rewrites unauthenticated API calls to /404 (HTML).
-        // Detect and surface a clearer message instead of "HTTP 404".
-        if (res.status === 404 || res.status === 401 || res.status === 307) {
-          throw new Error("Session expired — please reload and sign in again.");
-        }
-        throw new Error(`Council request failed (HTTP ${res.status})`);
-      }
-
-      const reader = res.body.getReader();
-      readerRef.current = reader;
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() ?? "";
-
-        for (const part of parts) {
-          const line = part.trim();
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const event: StreamEvent = JSON.parse(line.slice(6));
-            handleEvent(event);
-          } catch {/* ignore malformed */}
-        }
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Stream failed");
-    } finally {
-      setRunning(false);
-      setSynthLoading(false);
-    }
-  }, [ticker, assetClass]);
-
-  function handleEvent(event: StreamEvent) {
+  const handleEvent = useCallback((event: StreamEvent) => {
     switch (event.type) {
       case "agent_start":
         setRoles((prev) => (prev.includes(event.role) ? prev : [...prev, event.role]));
@@ -164,11 +106,9 @@ export function CouncilCard({ ticker, assetClass }: Props) {
         setSynthLoading(false);
         setVerdict(event.data);
         saveCache(ticker, assetClass, event.data);
-        // Restore rankings from verdict (cached path)
         if (event.data.aggregateRankings) {
           setAggregateRankings(event.data.aggregateRankings);
         }
-        // Ensure roles are populated from cached verdict agents if needed
         if (event.data.agents.length > 0 && roles.length === 0) {
           setRoles(event.data.agents.map((a) => a.role));
           const map: Record<string, AgentResult> = {};
@@ -181,9 +121,78 @@ export function CouncilCard({ ticker, assetClass }: Props) {
         setError(event.message);
         break;
     }
-  }
+  }, [ticker, assetClass, roles]);
 
-  const vc = verdict ? VERDICT_COLORS[verdict.verdict] : null;
+  const convene = useCallback(async () => {
+    setRunning(true);
+    setError(null);
+    setVerdict(null);
+    setAgentMap({});
+    setLoadingRoles(new Set());
+    setRoles([]);
+    setSynthLoading(false);
+    setStage2Loading(false);
+    setAggregateRankings(null);
+
+    try {
+      const res = await fetch("/api/council/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker, assetClass }),
+      });
+
+      if (!res.ok || !res.body) {
+        if (res.status === 404 || res.status === 401 || res.status === 307) {
+          throw new Error("Session expired — please reload and sign in again.");
+        }
+        throw new Error(`Council request failed (HTTP ${res.status})`);
+      }
+
+      const reader = res.body.getReader();
+      readerRef.current = reader;
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event: StreamEvent = JSON.parse(line.slice(6));
+            handleEvent(event);
+          } catch {/* ignore malformed */}
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Stream failed");
+    } finally {
+      setRunning(false);
+      setSynthLoading(false);
+    }
+  }, [ticker, assetClass, handleEvent]);
+
+  // Position-aware directive (research venue → short allowed as analysis).
+  const directive = useMemo(
+    () =>
+      verdict
+        ? resolveDirective({
+            verdict: verdict.verdict,
+            confidence: verdict.confidence,
+            tradeLevels: verdict.tradeLevels,
+            currentPrice,
+            position,
+            venue: "research",
+          })
+        : null,
+    [verdict, currentPrice, position]
+  );
 
   // If cached verdict, derive roles from agents
   const displayRoles =
@@ -268,51 +277,21 @@ export function CouncilCard({ ticker, assetClass }: Props) {
         </div>
       )}
 
-      {/* Verdict banner */}
-      {verdict && vc && (
-        <div
-          className={`border ${vc.border} ${vc.bg} p-3 mb-2 flex items-start justify-between gap-4`}
-        >
-          <div className="flex-1">
-            <div className={`text-[28px] font-bold tabular-nums ${vc.text} leading-none mb-1`}>
-              {verdict.verdict}
-            </div>
-            <div className="text-[10px] text-text leading-relaxed">
+      {/* Directive banner — the actionable, position-aware call (primary signal) */}
+      {verdict && directive && (
+        <div className="mb-2">
+          <DirectiveCard
+            directive={directive}
+            currency={verdict.currency}
+            showConfidence
+            confidence={verdict.confidence}
+            verdict={verdict.verdict}
+          />
+          {verdict.summary && (
+            <div className="text-[10px] text-dim leading-relaxed mt-1.5 px-0.5">
               {verdict.summary}
             </div>
-          </div>
-          <div className="shrink-0 flex flex-col items-center">
-            <svg
-              width={64}
-              height={64}
-              viewBox="0 0 64 64"
-              style={{ transform: "rotate(-90deg)" }}
-            >
-              <circle cx={32} cy={32} r={26} fill="none" stroke="#1a1a1a" strokeWidth={6} />
-              <circle
-                cx={32}
-                cy={32}
-                r={26}
-                fill="none"
-                stroke={
-                  verdict.verdict === "BUY"
-                    ? "#22c55e"
-                    : verdict.verdict === "SELL"
-                    ? "#ef4444"
-                    : "#ffb000"
-                }
-                strokeWidth={6}
-                strokeDasharray={`${(2 * Math.PI * 26 * verdict.confidence) / 100} ${2 * Math.PI * 26}`}
-                strokeLinecap="round"
-              />
-            </svg>
-            <div className={`text-[11px] tabular-nums font-bold -mt-1 ${vc.text}`}>
-              {verdict.confidence}%
-            </div>
-            <div className="text-[8px] text-muted uppercase tracking-wider">
-              conviction
-            </div>
-          </div>
+          )}
         </div>
       )}
 

@@ -46,3 +46,7 @@ next-env.d.ts
 .mcp.json
 
 .vercel
+.env*.local
+
+# clerk configuration (can include secrets)
+/.clerk/

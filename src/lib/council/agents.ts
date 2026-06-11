@@ -108,6 +108,20 @@ Current price: ${cur}${ctx.price.toFixed(2)} ${ctx.currency} (${ctx.changePct >=
     extras.push(`Option: ${o.optionType} ${o.strike} exp ${o.expiry} on ${o.underlying} (underlying price ${cur}${o.underlyingPrice.toFixed(2)})`);
   }
 
+  if (ctx.edgar?.financials?.length) {
+    const fmtB = (v: number | null) => {
+      if (v == null) return "n/a";
+      if (Math.abs(v) >= 1e12) return `${cur}${(v / 1e12).toFixed(2)}T`;
+      if (Math.abs(v) >= 1e9)  return `${cur}${(v / 1e9).toFixed(2)}B`;
+      if (Math.abs(v) >= 1e6)  return `${cur}${(v / 1e6).toFixed(2)}M`;
+      return `${cur}${v.toFixed(0)}`;
+    };
+    const rows = ctx.edgar.financials
+      .map((f) => `  ${f.year}: Rev=${fmtB(f.revenue)} | NI=${fmtB(f.netIncome)} | EPS=${f.eps != null ? `${cur}${f.eps.toFixed(2)}` : "n/a"} | OCF=${fmtB(f.operatingCashFlow)}`)
+      .join("\n");
+    extras.push(`SEC EDGAR Annual Financials (10-K, newest first):\n${rows}`);
+  }
+
   if (ctx.kronos) {
     const k = ctx.kronos;
     const sign = k.priceDeltaPct >= 0 ? "+" : "";

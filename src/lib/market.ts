@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 const FINNHUB = process.env.FINNHUB_API_KEY;
 const COINGECKO = process.env.COINGECKO_API_KEY;
 const TTL_MS = 10 * 60 * 1000; // 10 min
+const HIST_TTL_MS = 60 * 60 * 1000; // 1h — price-history series
 
 export type PriceQuote = {
   price: number;
@@ -227,4 +228,63 @@ export async function getPrice(
     change_pct: q.change_pct,
     fetched_at: new Date(),
   };
+}
+
+async function readSeriesCache(key: string): Promise<number[] | null> {
+  const r = await db
+    .select()
+    .from(market_data_cache)
+    .where(eq(market_data_cache.ticker, key))
+    .limit(1);
+  if (r.length === 0) return null;
+  const row = r[0];
+  if (Date.now() - new Date(row.fetched_at).getTime() > HIST_TTL_MS) return null;
+  const p = row.payload as { series?: number[] };
+  return Array.isArray(p?.series) ? p.series : null;
+}
+
+async function writeSeriesCache(key: string, series: number[]) {
+  const payload = { series };
+  await db
+    .insert(market_data_cache)
+    .values({ ticker: key, payload, fetched_at: new Date() })
+    .onConflictDoUpdate({
+      target: market_data_cache.ticker,
+      set: { payload, fetched_at: new Date() },
+    });
+}
+
+/**
+ * Fetch daily close prices for a crypto ticker over the last `days` days
+ * (CoinGecko market_chart). Cached ~1h. Returns null on failure / non-crypto.
+ */
+export async function getPriceHistory(
+  ticker: string,
+  days = 30
+): Promise<number[] | null> {
+  if (!ticker || !ticker.trim()) return null;
+  const normalized = normalizeTicker(ticker, "crypto");
+  const cacheK = `crypto-hist:${normalized}:${days}`;
+
+  const cached = await readSeriesCache(cacheK);
+  if (cached) return cached;
+
+  const id = await resolveCoinGeckoId(normalized);
+  if (!id) return null;
+  try {
+    const url = `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=${days}&interval=daily`;
+    const headers: Record<string, string> = {};
+    if (COINGECKO) headers["x-cg-demo-api-key"] = COINGECKO;
+    const r = await fetch(url, { cache: "no-store", headers });
+    if (!r.ok) return null;
+    const j = (await r.json()) as { prices?: [number, number][] };
+    const series = (j.prices ?? [])
+      .map(([, p]) => p)
+      .filter((p) => typeof p === "number" && Number.isFinite(p));
+    if (series.length === 0) return null;
+    await writeSeriesCache(cacheK, series);
+    return series;
+  } catch {
+    return null;
+  }
 }

@@ -4,6 +4,7 @@ const isPublic = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/ticker", // public ticker feed for landing/marketing if added later
+  "/api/cron(.*)", // cron jobs authenticate via CRON_SECRET, not Clerk
 ]);
 
 export default clerkMiddleware(async (auth, req) => {

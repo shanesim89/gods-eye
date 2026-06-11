@@ -7,6 +7,7 @@ import {
 } from "@/lib/finnhub";
 import { getYahooData, getYahooSummary, type YahooSummary } from "@/lib/yahoo";
 import { getKronosForecast, candlesToOHLCV } from "@/lib/kronos";
+import { getEdgarData } from "@/lib/edgar";
 import type { AssetClass, CouncilContext } from "./types";
 
 function buildAnalystBlock(
@@ -124,7 +125,7 @@ export async function buildContext(
   const symbol = ticker.toUpperCase();
 
   if (assetClass === "stocks" || assetClass === "etf") {
-    const [profileRes, quoteRes, finRes, yahooRes, summaryRes, newsRes, lc] =
+    const [profileRes, quoteRes, finRes, yahooRes, summaryRes, newsRes, lc, edgarRes] =
       await Promise.allSettled([
         getProfile(symbol),
         getQuote(symbol),
@@ -133,6 +134,7 @@ export async function buildContext(
         getYahooSummary(symbol),
         getCompanyNews(symbol),
         fetchLunarCrush(assetClass, symbol),
+        getEdgarData(symbol),
       ]);
 
     const profile = profileRes.status === "fulfilled" ? profileRes.value : null;
@@ -143,6 +145,7 @@ export async function buildContext(
     const candles = yahoo?.candles ?? null;
     const news    = newsRes.status    === "fulfilled" ? newsRes.value    : null;
     const lcData  = lc.status         === "fulfilled" ? lc.value         : null;
+    const edgar   = edgarRes.status   === "fulfilled" ? edgarRes.value   : null;
 
     // Kronos: needs candles first, then fires (null-safe on failure/timeout)
     const kronosCtxCandles =
@@ -205,6 +208,7 @@ export async function buildContext(
       nextEarningsDate: summary?.nextEarningsDate ?? null,
       lunarcrush: lcData,
       kronos: kronosData,
+      edgar,
     };
   }
 
