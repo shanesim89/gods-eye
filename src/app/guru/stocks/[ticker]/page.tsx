@@ -1,6 +1,9 @@
+import { and, eq } from "drizzle-orm";
 import { Panel } from "@/components/ui/Panel";
 import { CouncilCard } from "@/components/council/CouncilCard";
 import { requireUser } from "@/lib/auth";
+import { db } from "@/db/client";
+import { assets } from "@/db/schema";
 import { currencySymbol } from "@/lib/format";
 import {
   getProfile,
@@ -9,6 +12,7 @@ import {
   getCompanyNews,
 } from "@/lib/finnhub";
 import { getYahooData, getYahooSummary, type EpsQuarter } from "@/lib/yahoo";
+import { getEdgarData } from "@/lib/edgar";
 import { AnalystCard } from "../../_components/AnalystCard";
 import { PriceChart } from "./PriceChart";
 import { TickerSearch } from "../../_components/TickerSearch";
@@ -55,17 +59,18 @@ export default async function StockPage({
 }: {
   params: Promise<{ ticker: string }>;
 }) {
-  await requireUser();
+  const user = await requireUser();
   const { ticker } = await params;
   const symbol = ticker.toUpperCase();
 
-  const [profileRes, quoteRes, finRes, yahooRes, summaryRes, newsRes] = await Promise.allSettled([
+  const [profileRes, quoteRes, finRes, yahooRes, summaryRes, newsRes, edgarRes] = await Promise.allSettled([
     getProfile(symbol),
     getQuote(symbol),
     getBasicFinancials(symbol),
     getYahooData(symbol, 90),
     getYahooSummary(symbol),
     getCompanyNews(symbol),
+    getEdgarData(symbol),
   ]);
 
   const profile   = profileRes.status  === "fulfilled" ? profileRes.value         : null;
@@ -75,6 +80,7 @@ export default async function StockPage({
   const summary   = summaryRes.status  === "fulfilled" ? summaryRes.value         : null;
   const candles   = yahoo?.candles ?? null;
   const newsItems = newsRes.status     === "fulfilled" ? (newsRes.value ?? [])    : [];
+  const edgar     = edgarRes?.status   === "fulfilled" ? edgarRes.value           : null;
 
   // Diagnose failures so we never silently render price=0.
   const allFetchFailed =
@@ -90,6 +96,16 @@ export default async function StockPage({
   const isUp      = changePct >= 0;
   const ccy       = (profile?.currency || yahoo?.currency || "USD").toUpperCase();
   const cur       = currencySymbol(ccy);
+
+  // Holdings for position-aware council guidance. NOTE: council asset class is
+  // "stocks" but the assets table stores equities as "equity".
+  const holdingRows = await db
+    .select({ qty: assets.qty, costBasis: assets.cost_basis })
+    .from(assets)
+    .where(and(eq(assets.user_id, user.id), eq(assets.ticker, symbol), eq(assets.asset_class, "equity")));
+  const heldQty = holdingRows.reduce((s, h) => s + (h.qty ? parseFloat(h.qty) : 0), 0);
+  const heldCost = holdingRows.reduce((s, h) => s + (h.costBasis ? parseFloat(h.costBasis) : 0), 0);
+  const position = heldQty > 0 ? { held: true as const, qty: heldQty, costBasis: heldCost } : { held: false as const };
 
   // Metric sources with Yahoo fallback for fields Finnhub free tier no longer serves.
   const prevClose = quote?.pc || yahoo?.prevClose || undefined;
@@ -351,12 +367,50 @@ export default async function StockPage({
         </div>
       )}
 
+      {/* SEC EDGAR Annual Financials */}
+      {edgar?.financials && edgar.financials.length > 0 && (
+        <div className="border border-border bg-grid p-3 mb-3">
+          <div className="text-muted text-[10px] mb-2 uppercase tracking-[1px]">
+            ANNUAL FINANCIALS · SEC EDGAR (10-K)
+            <span className="ml-2 text-dim normal-case tracking-normal font-normal">{edgar.entityName}</span>
+          </div>
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr>
+                <th className="text-left text-muted font-normal pb-1 text-[10px] uppercase tracking-[0.5px]">Year</th>
+                <th className="text-right text-muted font-normal pb-1 text-[10px] uppercase tracking-[0.5px]">Revenue</th>
+                <th className="text-right text-muted font-normal pb-1 text-[10px] uppercase tracking-[0.5px]">Net Income</th>
+                <th className="text-right text-muted font-normal pb-1 text-[10px] uppercase tracking-[0.5px]">EPS Diluted</th>
+                <th className="text-right text-muted font-normal pb-1 text-[10px] uppercase tracking-[0.5px]">Oper CF</th>
+              </tr>
+            </thead>
+            <tbody>
+              {edgar.financials.map((f) => (
+                <tr key={f.year} className="dotted-row">
+                  <td className="py-0.5 text-text font-mono">{f.year}</td>
+                  <td className="py-0.5 text-right text-amber tabular-nums">{fmtBig(f.revenue, cur)}</td>
+                  <td className={`py-0.5 text-right tabular-nums ${f.netIncome != null && f.netIncome < 0 ? "text-red" : "text-amber"}`}>
+                    {fmtBig(f.netIncome, cur)}
+                  </td>
+                  <td className={`py-0.5 text-right tabular-nums ${f.eps != null && f.eps < 0 ? "text-red" : "text-amber"}`}>
+                    {f.eps != null ? `${cur}${f.eps.toFixed(2)}` : "—"}
+                  </td>
+                  <td className={`py-0.5 text-right tabular-nums ${f.operatingCashFlow != null && f.operatingCashFlow < 0 ? "text-red" : "text-amber"}`}>
+                    {fmtBig(f.operatingCashFlow, cur)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* Analyst consensus */}
       <AnalystCard summary={summary} price={price} currency={ccy} currencySymbol={cur} />
 
       {/* Investment Council */}
       <div className="mb-3">
-        <CouncilCard ticker={symbol} assetClass="stocks" />
+        <CouncilCard ticker={symbol} assetClass="stocks" currentPrice={price > 0 ? price : null} position={position} />
       </div>
 
       {/* News */}

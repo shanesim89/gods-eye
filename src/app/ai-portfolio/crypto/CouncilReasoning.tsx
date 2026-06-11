@@ -2,11 +2,16 @@
 
 import { useState } from "react";
 import type { Verdict } from "@/lib/council/types";
+import { resolveDirective } from "@/lib/council/directive";
+import { verdictColor } from "@/lib/council/display";
+import { DirectiveCard } from "@/components/council/DirectiveCard";
 
 export type ReasoningEntry = {
   token: string;
   verdict: Verdict | null;
   price: number | null;
+  qty?: number;
+  costBasis?: number | null;
 };
 
 const TOKEN_COLOR: Record<string, string> = {
@@ -15,10 +20,6 @@ const TOKEN_COLOR: Record<string, string> = {
   SOL: "#27f59b",
   HYPE: "#b56bff",
 };
-
-function verdictColor(v: string | undefined): string {
-  return v === "BUY" ? "#27f59b" : v === "SELL" ? "#ff5470" : "#ffcf4a";
-}
 
 function usd(v: number | null | undefined, dec = 2): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -109,6 +110,23 @@ export function CouncilReasoning({ entries }: { entries: ReasoningEntry[] }) {
             <span style={{ fontSize: 13, color: "#bfe9f2", fontVariantNumeric: "tabular-nums" }}>{v.confidence}% conviction</span>
             <span style={{ fontSize: 10, color: "#5b7d8a" }}>@ {usd(entry?.price)}</span>
             <span style={{ fontSize: 9, color: "#365360", marginLeft: "auto" }}>{fmtAgo(v.generatedAt)}</span>
+          </div>
+
+          {/* actionable directive (long-only spot → no short) */}
+          <div style={{ marginBottom: 14 }}>
+            <DirectiveCard
+              directive={resolveDirective({
+                verdict: v.verdict,
+                confidence: v.confidence,
+                tradeLevels: v.tradeLevels,
+                currentPrice: entry?.price ?? null,
+                position: (entry?.qty ?? 0) > 0
+                  ? { held: true, qty: entry!.qty!, costBasis: entry?.costBasis ?? null }
+                  : { held: false },
+                venue: "spot",
+              })}
+              currency={v.currency}
+            />
           </div>
 
           {/* summary */}

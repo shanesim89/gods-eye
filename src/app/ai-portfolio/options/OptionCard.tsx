@@ -1,6 +1,10 @@
 "use client";
 
 import type { Verdict } from "@/lib/council/types";
+import { resolveDirective } from "@/lib/council/directive";
+import { verdictColor as vColor } from "@/lib/council/display";
+import { ConfidenceGauge } from "@/components/council/ConfidenceGauge";
+import { DirectiveCard } from "@/components/council/DirectiveCard";
 
 export type OptionCardRow = {
   underlying: string;
@@ -66,18 +70,24 @@ function plainEnglish(pos: OpenPosition, underlying: string): string {
   return `Bought ${strike} put · paid ${prem}. Profit if ${underlying} falls below ${strike} by ${exp}.`;
 }
 
-const R = 30;
-const CIRC = 2 * Math.PI * R;
-
 export function OptionCard({ row }: { row: OptionCardRow }) {
   const { underlying, spot, changePct, verdict, wheelState, shares, costBasis, nextRun,
     openPositions, totalPremiumIncome, totalRealizedPnl, collateralReserved } = row;
 
   const conf = verdict?.confidence ?? 0;
-  const verdictText = verdict?.verdict ?? "—";
-  const verdictColor = verdictText === "BUY" ? "#27f59b" : verdictText === "SELL" ? "#ff5470" : "#ffcf4a";
-  const confDash = CIRC * (conf / 100);
-  const confGap = CIRC - confDash;
+  const verdictColor = vColor(verdict?.verdict);
+
+  // Wheel-aware directive (sell puts in cash, sell calls when holding).
+  const directive = verdict
+    ? resolveDirective({
+        verdict: verdict.verdict,
+        confidence: verdict.confidence,
+        tradeLevels: verdict.tradeLevels,
+        currentPrice: spot,
+        position: { kind: "wheel", state: wheelState, shares, costBasisPerShare: costBasis },
+        venue: "wheel",
+      })
+    : null;
 
   const stateLabel = wheelState === "cash" ? "CASH · SELLING PUTS" : `HOLDING ${Math.round(shares)} · SELLING CALLS`;
   const stateColor = wheelState === "cash" ? "#27f59b" : "#ffcf4a";
@@ -111,17 +121,7 @@ export function OptionCard({ row }: { row: OptionCardRow }) {
           <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: 3, color: "#ffcf4a", textShadow: "0 0 12px rgba(255,207,74,.5)" }}>
             {underlying}
           </div>
-          <div style={{ position: "relative", width: 44, height: 44 }}>
-            <svg width="44" height="44" viewBox="0 0 80 80">
-              <circle cx="40" cy="40" r={R} fill="none" stroke="rgba(70,224,245,.12)" strokeWidth="6" />
-              <circle cx="40" cy="40" r={R} fill="none" stroke={verdictColor} strokeWidth="6" strokeLinecap="round"
-                strokeDasharray={`${confDash} ${confGap}`} transform="rotate(-90 40 40)"
-                style={{ filter: `drop-shadow(0 0 4px ${verdictColor}99)` }} />
-            </svg>
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: verdictColor, fontVariantNumeric: "tabular-nums" }}>
-              {conf}
-            </div>
-          </div>
+          <ConfidenceGauge confidence={conf} color={verdictColor} size={46} />
         </div>
         <div style={{ fontSize: 14, marginTop: 2, letterSpacing: .5, fontVariantNumeric: "tabular-nums" }}>
           {usd(spot)}{" "}
@@ -189,10 +189,11 @@ export function OptionCard({ row }: { row: OptionCardRow }) {
           <span style={{ color: "#5b7d8a", letterSpacing: .5 }}>NEXT WHEEL RUN</span>
           <span style={{ color: "#ffcf4a", fontVariantNumeric: "tabular-nums" }}>{fmtDate(nextRun)}</span>
         </div>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, padding: "4px 0", borderTop: "1px solid rgba(64,200,224,.07)" }}>
-          <span style={{ color: "#5b7d8a", letterSpacing: .5 }}>UNDERLYING SIGNAL</span>
-          <span style={{ color: verdictColor }}>{verdictText} {conf}%</span>
-        </div>
+        {directive && (
+          <div style={{ padding: "6px 0", borderTop: "1px solid rgba(64,200,224,.07)" }}>
+            <DirectiveCard directive={directive} currency={verdict?.currency} variant="compact" />
+          </div>
+        )}
       </div>
     </div>
   );

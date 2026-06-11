@@ -198,8 +198,14 @@ export default async function CryptoDashboard() {
     };
   });
 
-  // Per-token council reasoning for the toggle panel
-  const reasoning = rows.map((r) => ({ token: r.token, verdict: r.verdict, price: r.price }));
+  // Per-token council reasoning for the toggle panel (with position for directive)
+  const reasoning = rows.map((r) => ({
+    token: r.token,
+    verdict: r.verdict,
+    price: r.price,
+    qty: r.qty,
+    costBasis: r.costBasis,
+  }));
 
   // Full order log (most recent first; allOrders already desc by created_at)
   const orderLog: OrderRow[] = allOrders.map((o) => ({

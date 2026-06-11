@@ -1,6 +1,9 @@
+import { and, eq } from "drizzle-orm";
 import { Panel } from "@/components/ui/Panel";
 import { CouncilCard } from "@/components/council/CouncilCard";
 import { requireUser } from "@/lib/auth";
+import { db } from "@/db/client";
+import { assets } from "@/db/schema";
 import { CryptoChart } from "./CryptoChart";
 import { TickerSearch } from "../../_components/TickerSearch";
 
@@ -94,7 +97,7 @@ export default async function CryptoPage({
 }: {
   params: Promise<{ ticker: string }>;
 }) {
-  await requireUser();
+  const user = await requireUser();
   const { ticker } = await params;
   const symbol = ticker.toUpperCase().replace(/-USDT?$/i, "");
 
@@ -145,6 +148,15 @@ export default async function CryptoPage({
   const md = coin?.market_data;
   const price     = md?.current_price?.usd ?? 0;
   const changePct = md?.price_change_percentage_24h ?? 0;
+
+  // Holdings for position-aware council guidance (crypto stored as "crypto").
+  const holdingRows = await db
+    .select({ qty: assets.qty, costBasis: assets.cost_basis })
+    .from(assets)
+    .where(and(eq(assets.user_id, user.id), eq(assets.ticker, symbol), eq(assets.asset_class, "crypto")));
+  const heldQty = holdingRows.reduce((s, h) => s + (h.qty ? parseFloat(h.qty) : 0), 0);
+  const heldCost = holdingRows.reduce((s, h) => s + (h.costBasis ? parseFloat(h.costBasis) : 0), 0);
+  const position = heldQty > 0 ? { held: true as const, qty: heldQty, costBasis: heldCost } : { held: false as const };
   const isUp      = changePct >= 0;
 
   const chartData =
@@ -244,7 +256,7 @@ export default async function CryptoPage({
       )}
 
       {/* Investment Council */}
-      <CouncilCard ticker={symbol} assetClass="crypto" />
+      <CouncilCard ticker={symbol} assetClass="crypto" currentPrice={price > 0 ? price : null} position={position} />
     </Panel>
   );
 }

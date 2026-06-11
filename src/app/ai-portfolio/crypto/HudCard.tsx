@@ -3,6 +3,10 @@
 import { useRef, useState } from "react";
 import type { Verdict } from "@/lib/council/types";
 import type { BuyZoneResult } from "@/lib/trading/buy-zone";
+import { resolveDirective } from "@/lib/council/directive";
+import { verdictColor as vColor } from "@/lib/council/display";
+import { ConfidenceGauge } from "@/components/council/ConfidenceGauge";
+import { DirectiveCard } from "@/components/council/DirectiveCard";
 
 export type TokenRow = {
   token: string;
@@ -33,9 +37,6 @@ function fmtDate(d: Date | null | undefined): string {
   if (!d) return "—";
   return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" }).toUpperCase();
 }
-
-const R = 30;
-const CIRC = 2 * Math.PI * R;
 
 function Sparkline({ data }: { data: number[] }) {
   const W = 200;
@@ -123,13 +124,22 @@ export function HudCard({ row }: { row: TokenRow }) {
   const pnlPct = pnl != null && costBasis && costBasis > 0 ? (pnl / costBasis) * 100 : null;
   const conf = verdict?.confidence ?? 0;
   const verdictText = verdict?.verdict ?? "—";
-  const confDash = CIRC * (conf / 100);
-  const confGap = CIRC - confDash;
   const isOver = maxPrice != null && price != null && price > maxPrice;
   const overPct = isOver && maxPrice && price ? (((price - maxPrice) / maxPrice) * 100).toFixed(1) : null;
 
-  const verdictColor =
-    verdictText === "BUY" ? "#27f59b" : verdictText === "SELL" ? "#ff5470" : "#ffcf4a";
+  const verdictColor = vColor(verdict?.verdict);
+
+  // Actionable directive (long-only spot → never short).
+  const directive = verdict
+    ? resolveDirective({
+        verdict: verdict.verdict,
+        confidence: verdict.confidence,
+        tradeLevels: verdict.tradeLevels,
+        currentPrice: price,
+        position: qty > 0 ? { held: true, qty, costBasis } : { held: false },
+        venue: "spot",
+      })
+    : null;
 
   const isSkipRisk = verdict?.verdict === "SELL" && (verdict.confidence ?? 0) >= sellSkipThreshold && consecutiveSkips < maxConsecutiveSkips;
   const isForcedNext = consecutiveSkips >= maxConsecutiveSkips;
@@ -170,18 +180,8 @@ export function HudCard({ row }: { row: TokenRow }) {
           <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: 3, color: "#ffcf4a", textShadow: "0 0 12px rgba(255,207,74,.5)" }}>
             {token}
           </div>
-          {/* mini confidence gauge */}
-          <div style={{ position: "relative", width: 44, height: 44 }}>
-            <svg width="44" height="44" viewBox="0 0 80 80">
-              <circle cx="40" cy="40" r={R} fill="none" stroke="rgba(70,224,245,.12)" strokeWidth="6" />
-              <circle cx="40" cy="40" r={R} fill="none" stroke={verdictColor} strokeWidth="6" strokeLinecap="round"
-                strokeDasharray={`${confDash} ${confGap}`} transform="rotate(-90 40 40)"
-                style={{ filter: `drop-shadow(0 0 4px ${verdictColor}99)` }} />
-            </svg>
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: verdictColor, fontVariantNumeric: "tabular-nums" }}>
-              {conf}
-            </div>
-          </div>
+          {/* mini confidence gauge (band primary, number small) */}
+          <ConfidenceGauge confidence={conf} color={verdictColor} size={46} />
         </div>
         <div style={{ fontSize: 14, marginTop: 2, letterSpacing: .5, fontVariantNumeric: "tabular-nums" }}>
           {usd(price)}{" "}
@@ -224,6 +224,13 @@ export function HudCard({ row }: { row: TokenRow }) {
         </div>
         <Sparkline data={spark} />
       </div>
+
+      {/* ── DIRECTIVE ── */}
+      {directive && (
+        <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(64,200,224,.15)" }}>
+          <DirectiveCard directive={directive} currency={verdict?.currency} variant="compact" />
+        </div>
+      )}
 
       {/* ── POSITION ── */}
       <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(64,200,224,.15)" }}>
