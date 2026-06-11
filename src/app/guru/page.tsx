@@ -3,7 +3,9 @@ import { TickerSearch } from "./_components/TickerSearch";
 import { SpxHeatmap } from "./_components/SpxHeatmap";
 import { CryptoHeatmap } from "./_components/CryptoHeatmap";
 import { FearGreedBar } from "./_components/FearGreedBar";
+import { GlobalHologramMap } from "./_components/GlobalHologramMap";
 import { getSpxHeatmap, getCryptoHeatmap, getFearGreed } from "@/lib/market-overview";
+import { getGlobalIndexScores } from "@/lib/global-indices";
 
 export const revalidate = 600; // ISR: refresh data every 10min
 
@@ -39,21 +41,28 @@ const CLASSES = [
 ];
 
 export default async function GuruPage() {
-  const [spxRes, cryptoRes, fgRes] = await Promise.allSettled([
+  const [spxRes, cryptoRes, fgRes, globalRes] = await Promise.allSettled([
     getSpxHeatmap(),
     getCryptoHeatmap(),
     getFearGreed(),
+    getGlobalIndexScores(),
   ]);
 
   const spx    = spxRes.status    === "fulfilled" ? spxRes.value    : [];
   const crypto = cryptoRes.status === "fulfilled" ? cryptoRes.value : [];
   const fg     = fgRes.status     === "fulfilled" ? fgRes.value     : { crypto: null, stocks: null };
+  const global = globalRes.status === "fulfilled" ? globalRes.value : [];
 
   return (
     <Panel
       title="INVESTMENT GURU"
       meta="MARKET RESEARCH · MULTI-AGENT COUNCIL"
     >
+      {/* ── Global hologram map ── */}
+      <div className="mt-2">
+        <GlobalHologramMap data={global} />
+      </div>
+
       {/* ── Ticker search ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
         {CLASSES.map((c) => (
@@ -80,44 +89,47 @@ export default async function GuruPage() {
         <FearGreedBar crypto={fg.crypto} stocks={fg.stocks} />
       </div>
 
-      {/* ── S&P500 Heatmap ── */}
-      <div className="border border-border bg-grid p-3 mt-3">
-        <div className="flex items-start justify-between flex-wrap gap-2 mb-3">
-          <div>
-            <div className="text-muted text-[10px] uppercase tracking-[1px]">
-              S&amp;P 500 · TOP 50 BY MKT CAP · DAILY %
+      {/* ── Heatmaps side-by-side ── */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mt-3">
+        {/* S&P 500 */}
+        <div className="border border-border bg-grid p-3">
+          <div className="flex items-start justify-between flex-wrap gap-2 mb-3">
+            <div>
+              <div className="text-muted text-[10px] uppercase tracking-[1px]">
+                S&amp;P 500 · TOP 50 BY MKT CAP · DAILY %
+              </div>
+              <div className="text-dim text-[9px] mt-0.5">
+                Sector avg shown · click tile → deep dive · grouped by GICS sector
+              </div>
             </div>
-            <div className="text-dim text-[9px] mt-0.5">
-              Sector avg shown · click tile → deep dive · grouped by GICS sector
+            <div className="text-dim text-[9px] leading-relaxed max-w-[200px] text-right">
+              Red sweep = broad sell-off.{" "}
+              Green island in red = strong catalyst.{" "}
+              Sector avg % = macro rotation signal.
             </div>
           </div>
-          <div className="text-dim text-[9px] leading-relaxed max-w-xs text-right">
-            Red sweep = broad sell-off / sector rotation out.{" "}
-            Green island in red sea = resilient stock, strong catalyst.{" "}
-            Check sector avg % for macro rotation signals.
-          </div>
+          <SpxHeatmap data={spx} />
         </div>
-        <SpxHeatmap data={spx} />
-      </div>
 
-      {/* ── Crypto Heatmap ── */}
-      <div className="border border-border bg-grid p-3 mt-3">
-        <div className="flex items-start justify-between flex-wrap gap-2 mb-3">
-          <div>
-            <div className="text-muted text-[10px] uppercase tracking-[1px]">
-              CRYPTO · TOP 50 BY MKT CAP · 24H %
+        {/* Crypto */}
+        <div className="border border-border bg-grid p-3">
+          <div className="flex items-start justify-between flex-wrap gap-2 mb-3">
+            <div>
+              <div className="text-muted text-[10px] uppercase tracking-[1px]">
+                CRYPTO · TOP 50 BY MKT CAP · 24H %
+              </div>
+              <div className="text-dim text-[9px] mt-0.5">
+                Tile size = market cap · click tile → deep dive
+              </div>
             </div>
-            <div className="text-dim text-[9px] mt-0.5">
-              Tile size = market cap · click tile → deep dive
+            <div className="text-dim text-[9px] leading-relaxed max-w-[200px] text-right">
+              BTC red + alts green = alt season signal.{" "}
+              All red = liquidation cascade.{" "}
+              Stables pumping = capital to safety.
             </div>
           </div>
-          <div className="text-dim text-[9px] leading-relaxed max-w-xs text-right">
-            If BTC red + alts green = rotation to alts (alt season signal).{" "}
-            All red = deleveraging / liquidation cascade.{" "}
-            Stables pumping = capital fleeing to safety.
-          </div>
+          <CryptoHeatmap data={crypto} />
         </div>
-        <CryptoHeatmap data={crypto} />
       </div>
 
       {/* ── Council teaser ── */}
