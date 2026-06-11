@@ -1,6 +1,7 @@
 import "server-only";
-import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { db } from "@/db/client";
+import { atomicCapClaim } from "@/db/cap-claim";
 import { ai_trading_settings, ai_token_schedule, ai_trade_orders, assets } from "@/db/schema";
 import { runCouncil } from "@/lib/council/run";
 import { adapterFor, venueFor } from "./router";
@@ -25,26 +26,6 @@ export type DcaRunResult = {
 
 function periodKey(due: Date): string {
   return due.toISOString().slice(0, 10);
-}
-
-// Month-to-date committed spend. Counts BOTH filled and pending: a pending row is
-// money already claimed for an in-flight buy. Ignoring it lets a crash between
-// marketBuy and the status update silently undercount the cap (H1/H2).
-async function monthlySpentUsd(userId: string): Promise<number> {
-  const monthStart = new Date();
-  monthStart.setUTCDate(1);
-  monthStart.setUTCHours(0, 0, 0, 0);
-  const rows = await db
-    .select({ total: sql<string>`coalesce(sum(${ai_trade_orders.usd_amount}), 0)` })
-    .from(ai_trade_orders)
-    .where(
-      and(
-        eq(ai_trade_orders.user_id, userId),
-        inArray(ai_trade_orders.status, ["filled", "pending"]),
-        gte(ai_trade_orders.created_at, monthStart)
-      )
-    );
-  return parseFloat(rows[0]?.total ?? "0");
 }
 
 // Surface orders stuck in `pending` (claimed but never resolved → likely a crash
@@ -133,7 +114,6 @@ export async function runDcaForUser(
   const overrides = (settings.token_overrides as Record<string, { max_price?: number; cadence_days?: number }>) ?? {};
   const now = new Date();
 
-  let spent = await monthlySpentUsd(userId);
   const outcomes: TokenOutcome[] = [];
 
   await alertStalePending(userId, now);
@@ -156,43 +136,16 @@ export async function runDcaForUser(
       }
 
       const idemKey = `${userId}:${token}:${periodKey(due)}`;
-
-      // GUARDRAIL 3: idempotency — claim the period atomically. Conflict → already processed.
-      const claimed = await db
-        .insert(ai_trade_orders)
-        .values({
-          user_id: userId,
-          token,
-          venue: venueFor(token),
-          usd_amount: dca.toFixed(2),
-          status: "pending" as unknown as string,
-          idempotency_key: idemKey,
-        })
-        .onConflictDoNothing({ target: ai_trade_orders.idempotency_key })
-        .returning({ id: ai_trade_orders.id });
-      if (claimed.length === 0) {
-        outcomes.push({ token, status: "skipped", reason: "already processed this period" });
-        continue;
-      }
-      const orderId = claimed[0].id;
       const adapter = adapterFor(token);
       const cadenceDays = overrides[token]?.cadence_days ?? DEFAULT_CADENCE_DAYS;
 
-      // GUARDRAIL 3b: per-token price ceiling — checked BEFORE the council so we
-      // don't pay full council cost (≈9 Anthropic calls) on tokens that will skip.
+      // GUARDRAIL 3b: per-token price ceiling — checked BEFORE council so we don't
+      // pay council cost (≈9 Anthropic calls) on tokens that will skip anyway.
+      // Price-ceiling skips don't claim an order row; schedule update is sufficient.
       const price = await adapter.getPrice(token);
       const maxPrice = overrides[token]?.max_price;
       if (maxPrice !== undefined && price > maxPrice) {
-        // Re-check tomorrow — waiting for price to drop to target.
         const recheckAt = new Date(now.getTime() + DAY_MS);
-        await db
-          .update(ai_trade_orders)
-          .set({
-            status: "skipped",
-            usd_amount: dca.toFixed(2),
-            error: `price ceiling: ${price} > ${maxPrice}`,
-          })
-          .where(eq(ai_trade_orders.id, orderId));
         await db
           .insert(ai_token_schedule)
           .values({ user_id: userId, token, next_run_at: recheckAt, consecutive_skips: 0 })
@@ -219,15 +172,21 @@ export async function runDcaForUser(
         consecutiveSkips < maxSkips
       ) {
         const nextRun = new Date(due.getTime() + cadenceDays * DAY_MS);
+        // Direct insert as skipped — no pending claim needed for SELL-skip audit rows.
         await db
-          .update(ai_trade_orders)
-          .set({
-            status: "skipped",
+          .insert(ai_trade_orders)
+          .values({
+            user_id: userId,
+            token,
+            venue: venueFor(token),
+            usd_amount: dca.toFixed(2),
+            status: "skipped" as unknown as string,
+            idempotency_key: `${idemKey}:sell-skip`,
             council_verdict: verdict.verdict,
             council_confidence: verdict.confidence,
             error: `SELL-skip: conf ${verdict.confidence} >= ${sellThreshold}`,
           })
-          .where(eq(ai_trade_orders.id, orderId));
+          .onConflictDoNothing({ target: ai_trade_orders.idempotency_key });
         await db
           .insert(ai_token_schedule)
           .values({ user_id: userId, token, next_run_at: nextRun, consecutive_skips: consecutiveSkips + 1 })
@@ -243,24 +202,29 @@ export async function runDcaForUser(
       const bz = evaluateBuyZone(verdict, price, minConf);
       const { amount, boosted } = orderAmountUsd(bz.isBuyZone, dca, boost);
 
-      // GUARDRAIL 4: monthly spend cap.
-      if (spent + amount > cap) {
-        await db
-          .update(ai_trade_orders)
-          .set({
-            status: "skipped",
-            usd_amount: amount.toFixed(2),
-            boosted,
-            council_verdict: verdict.verdict,
-            council_confidence: verdict.confidence,
-            dip_depth_pct: bz.dipDepthPct != null ? bz.dipDepthPct.toFixed(2) : null,
-            error: `monthly cap: ${spent.toFixed(2)}+${amount} > ${cap}`,
-          })
-          .where(eq(ai_trade_orders.id, orderId));
-        await setAlert(userId, `${token} skipped — monthly cap reached`);
-        outcomes.push({ token, status: "skipped", amount, reason: "monthly cap" });
+      // GUARDRAIL 4: atomic monthly cap check + idempotency claim in one serializable
+      // transaction. Concurrent cron runs serialize here — no double-buy on stale data.
+      const claim = await atomicCapClaim({
+        userId,
+        token,
+        venue: venueFor(token),
+        amountUsd: amount,
+        capUsd: cap,
+        idemKey,
+        dcaAmountUsd: dca,
+      });
+
+      if (!claim.claimed) {
+        if (claim.reason === "cap_exceeded") {
+          await setAlert(userId, `${token} skipped — monthly cap reached`);
+          outcomes.push({ token, status: "skipped", amount, reason: "monthly cap" });
+        } else {
+          outcomes.push({ token, status: "skipped", reason: "already processed this period" });
+        }
         continue;
       }
+
+      const { orderId } = claim;
 
       // GUARDRAIL 5: min exchange balance.
       const balance = await adapter.getUsdBalance();
@@ -302,8 +266,6 @@ export async function runDcaForUser(
 
       // Reflect the fill in holdings so the dashboard shows real position + P&L.
       await creditHolding(userId, token, fill.qty, fillUsd);
-
-      spent += amount;
 
       // Advance cadence: next run from now, reset skip counter.
       const nextRun = new Date(now.getTime() + cadenceDays * DAY_MS);
