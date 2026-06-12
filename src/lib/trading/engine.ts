@@ -6,6 +6,7 @@ import { ai_trading_settings, ai_token_schedule, ai_trade_orders, assets } from 
 import { runCouncil } from "@/lib/council/run";
 import { adapterFor, venueFor } from "./router";
 import { evaluateBuyZone, orderAmountUsd } from "./buy-zone";
+import { newTrace } from "./gates";
 
 const DEFAULT_CADENCE_DAYS = 14;
 const DAY_MS = 86_400_000;
@@ -125,6 +126,8 @@ export async function runDcaForUser(
   const schedByToken = new Map(schedRows.map((r) => [r.token, r]));
 
   for (const token of tokens) {
+    // Per-run gate trace, persisted onto whatever order row this iteration writes.
+    const trace = newTrace().pass("kill_switch");
     try {
       const sched = schedByToken.get(token);
       const due = sched?.next_run_at ?? now; // missing schedule → due now (first run)
@@ -134,6 +137,7 @@ export async function runDcaForUser(
         outcomes.push({ token, status: "skipped", reason: "not due" });
         continue;
       }
+      trace.pass("due", opts.force ? "forced run" : undefined);
 
       const idemKey = `${userId}:${token}:${periodKey(due)}`;
       const adapter = adapterFor(token);
@@ -157,9 +161,11 @@ export async function runDcaForUser(
         outcomes.push({ token, status: "skipped", reason: `price ${price} > max ${maxPrice} (daily recheck)` });
         continue;
       }
+      trace.pass("price_ceiling", maxPrice !== undefined ? `price ${price} ≤ ceiling ${maxPrice}` : "no ceiling set");
 
       // Council (in-process, cached) → verdict. Only reached when price ≤ ceiling.
       const verdict = await runCouncil(userId, "crypto", token);
+      trace.pass("council", `${verdict.verdict} ${verdict.confidence}%`);
 
       // GUARDRAIL 3c: SELL-skip gate — skip period if strong SELL and skips not maxed.
       const sellThreshold = (settings.sell_skip_threshold as number | null) ?? 70;
@@ -172,6 +178,7 @@ export async function runDcaForUser(
         consecutiveSkips < maxSkips
       ) {
         const nextRun = new Date(due.getTime() + cadenceDays * DAY_MS);
+        trace.halt("sell_skip", `SELL conf ${verdict.confidence} ≥ ${sellThreshold} — period skipped (${consecutiveSkips + 1}/${maxSkips})`);
         // Direct insert as skipped — no pending claim needed for SELL-skip audit rows.
         await db
           .insert(ai_trade_orders)
@@ -185,6 +192,7 @@ export async function runDcaForUser(
             council_verdict: verdict.verdict,
             council_confidence: verdict.confidence,
             error: `SELL-skip: conf ${verdict.confidence} >= ${sellThreshold}`,
+            gate_trace: trace.done(),
           })
           .onConflictDoNothing({ target: ai_trade_orders.idempotency_key });
         await db
@@ -199,8 +207,11 @@ export async function runDcaForUser(
         continue;
       }
 
+      trace.pass("sell_skip", verdict.verdict === "SELL" ? "SELL but skips maxed or below threshold" : "no strong SELL");
+
       const bz = evaluateBuyZone(verdict, price, minConf);
       const { amount, boosted } = orderAmountUsd(bz.isBuyZone, dca, boost);
+      trace.pass("buy_zone", boosted ? `buy-zone hit — boosted $${amount}` : `base size $${amount}`);
 
       // GUARDRAIL 4: atomic monthly cap check + idempotency claim in one serializable
       // transaction. Concurrent cron runs serialize here — no double-buy on stale data.
@@ -225,10 +236,12 @@ export async function runDcaForUser(
       }
 
       const { orderId } = claim;
+      trace.pass("monthly_cap", `$${claim.spentAfter.toFixed(2)} after this order`);
 
       // GUARDRAIL 5: min exchange balance.
       const balance = await adapter.getUsdBalance();
       if (balance < amount) {
+        trace.halt("balance", `insufficient: $${balance.toFixed(2)} < $${amount.toFixed(2)}`);
         await db
           .update(ai_trade_orders)
           .set({
@@ -239,6 +252,7 @@ export async function runDcaForUser(
             council_confidence: verdict.confidence,
             dip_depth_pct: bz.dipDepthPct != null ? bz.dipDepthPct.toFixed(2) : null,
             error: `insufficient balance: ${balance} < ${amount}`,
+            gate_trace: trace.done(),
           })
           .where(eq(ai_trade_orders.id, orderId));
         await setAlert(userId, `${token} skipped — balance ${balance} < ${amount}`);
@@ -246,9 +260,12 @@ export async function runDcaForUser(
         continue;
       }
 
+      trace.pass("balance", `$${balance.toFixed(2)} available`);
+
       // Execute.
       const fill = await adapter.marketBuy(token, amount);
       const fillUsd = fill.qty * fill.price; // actual notional (floor + slippage), not requested
+      trace.pass("execute", `filled ${fill.qty.toFixed(8)} @ ${fill.price}`);
       await db
         .update(ai_trade_orders)
         .set({
@@ -261,6 +278,7 @@ export async function runDcaForUser(
           council_confidence: verdict.confidence,
           dip_depth_pct: bz.dipDepthPct != null ? bz.dipDepthPct.toFixed(2) : null,
           exchange_order_id: fill.orderId,
+          gate_trace: trace.done(),
         })
         .where(eq(ai_trade_orders.id, orderId));
 
@@ -282,9 +300,10 @@ export async function runDcaForUser(
       // GUARDRAIL 6: halt-on-error — mark failed, alert, never retry this period, continue to next token.
       const msg = err instanceof Error ? err.message : "unknown error";
       const idemKey = `${userId}:${token}:${periodKey(schedByToken.get(token)?.next_run_at ?? now)}`;
+      // trace was mutated up to the gate that threw; remaining gates read not_reached.
       await db
         .update(ai_trade_orders)
-        .set({ status: "failed", error: msg })
+        .set({ status: "failed", error: msg, gate_trace: trace.done() })
         .where(eq(ai_trade_orders.idempotency_key, idemKey));
       await setAlert(userId, `${token} FAILED — ${msg}`);
       outcomes.push({ token, status: "failed", reason: msg });

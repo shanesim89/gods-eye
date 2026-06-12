@@ -13,6 +13,7 @@ import { histVol } from "./blackscholes";
 import { selectCSP, selectCC, selectLongPlay, settle } from "./strategy";
 import type { OptionsStrategyConfig } from "./strategy";
 import type { Underlying } from "./settings";
+import { newTrace, WHEEL_GATES } from "@/lib/trading/gates";
 
 const WEEK_MS = 7 * 86_400_000;
 
@@ -200,6 +201,8 @@ export async function runOptionsForUser(
 
   for (const und of underlyings) {
     const { symbol, class: assetClass } = und;
+    // Per-underlying gate trace, merged into the period_claim order row's detail.
+    const trace = newTrace(WHEEL_GATES).pass("kill_switch").pass("settle", "expired positions settled");
     try {
       const wheel = wheelByUnderlying.get(symbol);
       const nextRun = wheel?.next_run_at ?? null;
@@ -209,6 +212,7 @@ export async function runOptionsForUser(
         outcomes.push({ underlying: symbol, status: "skipped", reason: "not due" });
         continue;
       }
+      trace.pass("due", opts.force ? "forced run" : undefined);
 
       const idemKey = `${userId}:${symbol}:${weekKey(now)}`;
 
@@ -230,10 +234,12 @@ export async function runOptionsForUser(
       const priceData = await getPrice(symbol, assetClass).catch(() => null);
       const spot = priceData?.price;
       if (!spot || spot <= 0) {
-        await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "no price" } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+        trace.halt("council", "no price for underlying");
+        await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "no price", gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
         outcomes.push({ underlying: symbol, status: "skipped", reason: "no price" });
         continue;
       }
+      trace.pass("council", `${verdict.verdict} ${verdict.confidence}%`);
 
       const series = await getPriceHistory(symbol, 30).catch(() => null);
       const fallbackVol = assetClass === "crypto" ? 0.6 : 0.25;
@@ -245,12 +251,15 @@ export async function runOptionsForUser(
       if (state === "cash") {
         // Skip selling puts into a strong SELL signal (don't sell puts on declining underlyings)
         if (verdict.verdict === "SELL" && verdict.confidence >= cfg.convictionThreshold) {
-          await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "SELL signal — skip CSP", verdict: verdict.verdict, confidence: verdict.confidence } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+          trace.halt("conviction", `SELL conf ${verdict.confidence} ≥ ${cfg.convictionThreshold} — skip CSP`);
+          await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "SELL signal — skip CSP", verdict: verdict.verdict, confidence: verdict.confidence, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
           outcomes.push({ underlying: symbol, status: "skipped", reason: `SELL signal (conf ${verdict.confidence}) — skip CSP` });
         } else {
+          trace.pass("conviction", `${verdict.verdict} ${verdict.confidence}% — ok to sell puts`);
           const csp = selectCSP(symbol, spot, sigma, cfg);
           if (openCollateral + csp.collateralUsd > maxCollateral) {
-            await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "collateral cap" } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+            trace.halt("collateral", `$${(openCollateral + csp.collateralUsd).toFixed(0)} > cap $${maxCollateral.toFixed(0)}`);
+            await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "collateral cap", gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
             outcomes.push({ underlying: symbol, status: "skipped", reason: "collateral cap reached" });
           } else {
             await db.insert(ai_options_positions).values({
@@ -272,7 +281,10 @@ export async function runOptionsForUser(
               council_verdict: verdict.verdict,
               council_confidence: verdict.confidence,
             });
-            await db.update(ai_options_orders).set({ action: "open_csp", detail: { symbol: csp.contractSymbol, strike: csp.strike, premium: csp.premium } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+            trace.pass("collateral", `$${csp.collateralUsd.toFixed(0)} reserved`);
+            trace.pass("select_contract", `${csp.contractSymbol} Δ${csp.greeks.delta.toFixed(2)}`);
+            trace.pass("execute", `CSP opened, premium $${csp.premiumTotal.toFixed(2)}`);
+            await db.update(ai_options_orders).set({ action: "open_csp", detail: { symbol: csp.contractSymbol, strike: csp.strike, premium: csp.premium, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
             outcomes.push({ underlying: symbol, status: "opened_csp", detail: { contractSymbol: csp.contractSymbol, strike: csp.strike, premiumTotal: csp.premiumTotal, delta: csp.greeks.delta } });
           }
         }
@@ -300,7 +312,11 @@ export async function runOptionsForUser(
           council_verdict: verdict.verdict,
           council_confidence: verdict.confidence,
         });
-        await db.update(ai_options_orders).set({ action: "open_cc", detail: { symbol: cc.contractSymbol, strike: cc.strike, premium: cc.premium } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+        trace.pass("conviction", `${verdict.verdict} ${verdict.confidence}%`);
+        trace.pass("collateral", "covered by held shares");
+        trace.pass("select_contract", `${cc.contractSymbol} Δ${cc.greeks.delta.toFixed(2)}`);
+        trace.pass("execute", `CC opened, premium $${cc.premiumTotal.toFixed(2)}`);
+        await db.update(ai_options_orders).set({ action: "open_cc", detail: { symbol: cc.contractSymbol, strike: cc.strike, premium: cc.premium, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
         outcomes.push({ underlying: symbol, status: "opened_cc", detail: { contractSymbol: cc.contractSymbol, strike: cc.strike, premiumTotal: cc.premiumTotal } });
       }
 

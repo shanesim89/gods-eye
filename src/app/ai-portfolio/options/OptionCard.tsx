@@ -1,8 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import type { Verdict } from "@/lib/council/types";
 import { resolveDirective } from "@/lib/council/directive";
-import { verdictColor as vColor } from "@/lib/council/display";
+import { bandExplanation, verdictColor as vColor } from "@/lib/council/display";
 import { ConfidenceGauge } from "@/components/council/ConfidenceGauge";
 import { DirectiveCard } from "@/components/council/DirectiveCard";
 
@@ -20,6 +21,10 @@ export type OptionCardRow = {
   totalPremiumIncome: number; // realized premium collected (all-time)
   totalRealizedPnl: number;
   collateralReserved: number;
+  // strategy settings for the plan line
+  targetDelta: number;
+  dteMin: number;
+  dteMax: number;
 };
 
 export type OpenPosition = {
@@ -72,8 +77,10 @@ function plainEnglish(pos: OpenPosition, underlying: string): string {
 
 export function OptionCard({ row }: { row: OptionCardRow }) {
   const { underlying, spot, changePct, verdict, wheelState, shares, costBasis, nextRun,
-    openPositions, totalPremiumIncome, totalRealizedPnl, collateralReserved } = row;
+    openPositions, totalPremiumIncome, totalRealizedPnl, collateralReserved,
+    targetDelta, dteMin, dteMax } = row;
 
+  const [showExplain, setShowExplain] = useState(false);
   const conf = verdict?.confidence ?? 0;
   const verdictColor = vColor(verdict?.verdict);
 
@@ -91,6 +98,14 @@ export function OptionCard({ row }: { row: OptionCardRow }) {
 
   const stateLabel = wheelState === "cash" ? "CASH · SELLING PUTS" : `HOLDING ${Math.round(shares)} · SELLING CALLS`;
   const stateColor = wheelState === "cash" ? "#27f59b" : "#ffcf4a";
+
+  // Forward plan line — what the wheel intends next and the contract spec it will use.
+  const planLine =
+    wheelState === "cash"
+      ? `STATE: CASH → NEXT: SELL PUT @ Δ${targetDelta}, ${dteMin}–${dteMax} DTE`
+      : `STATE: HOLDING ${Math.round(shares)} → NEXT: SELL CALL @ Δ${targetDelta}, ${dteMin}–${dteMax} DTE${costBasis != null ? ` above basis ${usd(costBasis, 2)}` : ""}`;
+
+  const premiumAtRisk = openPositions.reduce((s, p) => s + p.premiumTotal, 0);
 
   const cellStyle: React.CSSProperties = {
     border: "1px solid rgba(64,200,224,.12)", padding: "6px 8px",
@@ -138,50 +153,84 @@ export function OptionCard({ row }: { row: OptionCardRow }) {
         </div>
       </div>
 
-      {/* OPEN POSITIONS */}
-      <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid rgba(64,200,224,.15)" }}>
-        <div style={{ fontSize: 7, letterSpacing: 2, color: "#5b7d8a", textTransform: "uppercase", marginBottom: 6 }}>OPEN POSITIONS</div>
-        {openPositions.length === 0 ? (
-          <div style={{ fontSize: 10, color: "#365360" }}>NO OPEN POSITIONS</div>
-        ) : (
-          openPositions.map((pos) => (
-            <div key={pos.id} style={{ marginBottom: 8, borderLeft: "2px solid rgba(64,200,224,.2)", paddingLeft: 8 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                <span style={{ fontSize: 9, fontWeight: 700, color: "#bfe9f2", letterSpacing: .5 }}>{strategyLabel(pos.strategy)}</span>
-                <span style={{ fontSize: 8, color: "#365360" }}>DTE {pos.dte}</span>
-              </div>
-              <div style={{ fontSize: 9, color: "#5b7d8a", fontVariantNumeric: "tabular-nums", marginTop: 2 }}>
-                {pos.contractSymbol} · STRIKE {usd(pos.strike, pos.strike >= 100 ? 0 : 2)} · EXP {fmtDate(pos.expiry)}
-              </div>
-              <div style={{ fontSize: 9, color: "#ffcf4a", fontVariantNumeric: "tabular-nums", marginTop: 2 }}>
-                PREMIUM {usd(pos.premiumTotal, 0)}
-                {pos.delta != null && <span style={{ color: "#5b7d8a", marginLeft: 6 }}>Δ {pos.delta.toFixed(2)}</span>}
-                {pos.theta != null && <span style={{ color: "#ff5470", marginLeft: 6 }}>θ {pos.theta.toFixed(3)}/d</span>}
-              </div>
-              <div style={{ fontSize: 8, color: "#365360", marginTop: 3, lineHeight: 1.4 }}>
-                {plainEnglish(pos, underlying)}
-              </div>
-            </div>
-          ))
+      {/* PLAN LINE — current state, next intended action, contract spec */}
+      <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(64,200,224,.15)" }}>
+        <div style={{ fontSize: 7, letterSpacing: 2, color: "#5b7d8a", textTransform: "uppercase", marginBottom: 4 }}>PLAN</div>
+        <div style={{ fontSize: 9.5, color: "#8fb8c4", letterSpacing: 0.5, lineHeight: 1.6, fontVariantNumeric: "tabular-nums" }}>
+          {planLine}
+        </div>
+        {directive && (
+          <div style={{ marginTop: 6 }}>
+            <DirectiveCard directive={directive} currency={verdict?.currency} variant="compact" />
+          </div>
+        )}
+        {verdict && (
+          <div style={{ fontSize: 8.5, color: "#5b7d8a", fontStyle: "italic", marginTop: 5, lineHeight: 1.5 }}>
+            {bandExplanation(verdict.confidence, wheelState === "cash" ? "wheel_cash" : "wheel_stock")}
+          </div>
         )}
       </div>
 
-      {/* P&L + COLLATERAL */}
-      <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(64,200,224,.15)" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-          {[
-            { l: "PREMIUM INCOME", v: usd(totalPremiumIncome, 0) },
-            { l: "REALIZED P&L", v: usd(totalRealizedPnl, 0) },
-            { l: "COLLATERAL RSRV", v: usd(collateralReserved, 0) },
-            { l: "COST BASIS/SH", v: costBasis ? usd(costBasis, 2) : "—" },
-          ].map(({ l, v }) => (
-            <div key={l} style={cellStyle}>
-              <div style={{ fontSize: 7, letterSpacing: 1, color: "#5b7d8a", textTransform: "uppercase" }}>{l}</div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#bfe9f2", marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{v}</div>
-            </div>
-          ))}
-        </div>
+      {/* collapsed summary + EXPLAIN toggle */}
+      <div style={{ padding: "8px 14px", borderBottom: "1px solid rgba(64,200,224,.15)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 9, color: "#8fb8c4", fontVariantNumeric: "tabular-nums" }}>
+          {openPositions.length} OPEN · {usd(premiumAtRisk, 0)} PREMIUM AT RISK
+        </span>
+        <button
+          onClick={() => setShowExplain((s) => !s)}
+          style={{ background: "none", border: "none", color: "#5b7d8a", fontSize: 8, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", fontFamily: "monospace", padding: 0 }}
+        >
+          {showExplain ? "▾ hide" : "▸ explain"}
+        </button>
       </div>
+
+      {/* EXPLAIN — open positions detail + P&L/collateral grid */}
+      {showExplain && (
+        <>
+          <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid rgba(64,200,224,.15)" }}>
+            <div style={{ fontSize: 7, letterSpacing: 2, color: "#5b7d8a", textTransform: "uppercase", marginBottom: 6 }}>OPEN POSITIONS</div>
+            {openPositions.length === 0 ? (
+              <div style={{ fontSize: 10, color: "#365360" }}>NO OPEN POSITIONS</div>
+            ) : (
+              openPositions.map((pos) => (
+                <div key={pos.id} style={{ marginBottom: 8, borderLeft: "2px solid rgba(64,200,224,.2)", paddingLeft: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: "#bfe9f2", letterSpacing: .5 }}>{strategyLabel(pos.strategy)}</span>
+                    <span style={{ fontSize: 8, color: "#365360" }}>DTE {pos.dte}</span>
+                  </div>
+                  <div style={{ fontSize: 9, color: "#5b7d8a", fontVariantNumeric: "tabular-nums", marginTop: 2 }}>
+                    {pos.contractSymbol} · STRIKE {usd(pos.strike, pos.strike >= 100 ? 0 : 2)} · EXP {fmtDate(pos.expiry)}
+                  </div>
+                  <div style={{ fontSize: 9, color: "#ffcf4a", fontVariantNumeric: "tabular-nums", marginTop: 2 }}>
+                    PREMIUM {usd(pos.premiumTotal, 0)}
+                    {pos.delta != null && <span style={{ color: "#5b7d8a", marginLeft: 6 }}>Δ {pos.delta.toFixed(2)}</span>}
+                    {pos.theta != null && <span style={{ color: "#ff5470", marginLeft: 6 }}>θ {pos.theta.toFixed(3)}/d</span>}
+                  </div>
+                  <div style={{ fontSize: 8, color: "#365360", marginTop: 3, lineHeight: 1.4 }}>
+                    {plainEnglish(pos, underlying)}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(64,200,224,.15)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+              {[
+                { l: "PREMIUM INCOME", v: usd(totalPremiumIncome, 0) },
+                { l: "REALIZED P&L", v: usd(totalRealizedPnl, 0) },
+                { l: "COLLATERAL RSRV", v: usd(collateralReserved, 0) },
+                { l: "COST BASIS/SH", v: costBasis ? usd(costBasis, 2) : "—" },
+              ].map(({ l, v }) => (
+                <div key={l} style={cellStyle}>
+                  <div style={{ fontSize: 7, letterSpacing: 1, color: "#5b7d8a", textTransform: "uppercase" }}>{l}</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#bfe9f2", marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
 
       {/* FOOTER */}
       <div style={{ padding: "10px 14px", marginTop: "auto" }}>
@@ -189,11 +238,6 @@ export function OptionCard({ row }: { row: OptionCardRow }) {
           <span style={{ color: "#5b7d8a", letterSpacing: .5 }}>NEXT WHEEL RUN</span>
           <span style={{ color: "#ffcf4a", fontVariantNumeric: "tabular-nums" }}>{fmtDate(nextRun)}</span>
         </div>
-        {directive && (
-          <div style={{ padding: "6px 0", borderTop: "1px solid rgba(64,200,224,.07)" }}>
-            <DirectiveCard directive={directive} currency={verdict?.currency} variant="compact" />
-          </div>
-        )}
       </div>
     </div>
   );

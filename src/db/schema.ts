@@ -198,6 +198,7 @@ export const ai_trade_orders = pgTable("ai_trade_orders", {
   idempotency_key: text("idempotency_key").unique().notNull(),
   exchange_order_id: text("exchange_order_id"),
   error: text("error"),
+  gate_trace: jsonb("gate_trace"), // GateTrace {v:1, gates:[...]} — null on pre-trace rows
   created_at: timestamp("created_at").defaultNow().notNull(),
 });
 

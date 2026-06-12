@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { AgentPanel } from "./AgentPanel";
 import { DirectiveCard } from "./DirectiveCard";
 import { resolveDirective, type Position } from "@/lib/council/directive";
+import { bandExplanation } from "@/lib/council/display";
 import { currencySymbol } from "@/lib/format";
 import type {
   AgentResult,
@@ -59,8 +60,15 @@ export function CouncilCard({ ticker, assetClass, currentPrice = null, position 
   );
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
-  const [showDebate, setShowDebate] = useState(false);
+  // Mode: auto-detected from the DB position; the other tab is a "peek".
+  const [viewMode, setViewMode] = useState<"position" | "buying">(position.held ? "position" : "buying");
+  const [showExplain, setShowExplain] = useState(false);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
+
+  // Re-sync mode if the server-provided position changes (e.g. navigation).
+  useEffect(() => {
+    setViewMode(position.held ? "position" : "buying");
+  }, [position.held]);
 
   // Cancel stream on unmount (e.g. user navigates away mid-debate)
   useEffect(() => {
@@ -179,20 +187,27 @@ export function CouncilCard({ ticker, assetClass, currentPrice = null, position 
   }, [ticker, assetClass, handleEvent]);
 
   // Position-aware directive (research venue → short allowed as analysis).
-  const directive = useMemo(
-    () =>
-      verdict
-        ? resolveDirective({
-            verdict: verdict.verdict,
-            confidence: verdict.confidence,
-            tradeLevels: verdict.tradeLevels,
-            currentPrice,
-            position,
-            venue: "research",
-          })
-        : null,
-    [verdict, currentPrice, position]
-  );
+  // The displayed directive follows viewMode: peeking at the non-actual mode
+  // substitutes a synthetic position so the user can see "what if".
+  const actualMode: "position" | "buying" = position.held ? "position" : "buying";
+  const isPeek = viewMode !== actualMode;
+  const directive = useMemo(() => {
+    if (!verdict) return null;
+    const displayPosition: Position =
+      viewMode === "position"
+        ? position.held
+          ? position
+          : { held: true, qty: 0, costBasis: null } // hypothetical holding
+        : { held: false };
+    return resolveDirective({
+      verdict: verdict.verdict,
+      confidence: verdict.confidence,
+      tradeLevels: verdict.tradeLevels,
+      currentPrice,
+      position: displayPosition,
+      venue: "research",
+    });
+  }, [verdict, currentPrice, position, viewMode]);
 
   // If cached verdict, derive roles from agents
   const displayRoles =
@@ -227,47 +242,72 @@ export function CouncilCard({ ticker, assetClass, currentPrice = null, position 
         )}
       </div>
 
-      {/* Agent grid */}
-      {displayRoles.length > 0 ? (
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
-          {displayRoles.map((role) => {
-            const peerRank = aggregateRankings
-              ? aggregateRankings.findIndex((ar) => ar.role === role) + 1
-              : undefined;
+      {/* Mode toggle: auto-detected from DB position; other tab is a peek. */}
+      {verdict && (
+        <div className="flex items-center gap-1 mb-2">
+          {(["position", "buying"] as const).map((m) => {
+            const active = viewMode === m;
+            const label = m === "position" ? "IN POSITION" : "BUYING";
+            const peek = m !== actualMode;
             return (
-              <AgentPanel
-                key={role}
-                role={role}
-                result={displayAgentMap[role]}
-                loading={loadingRoles.has(role)}
-                peerRank={peerRank || undefined}
-                totalPeers={aggregateRankings?.length}
-              />
+              <button
+                key={m}
+                onClick={() => setViewMode(m)}
+                className={`text-[9px] uppercase tracking-[1px] px-2.5 py-1 border transition-colors cursor-pointer
+                  ${active
+                    ? "border-amber text-amber bg-amber/10"
+                    : "border-border/40 text-dim hover:text-muted"
+                  }`}
+              >
+                {label}
+                {peek && <span className="ml-1 opacity-60">(peek)</span>}
+              </button>
             );
           })}
         </div>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3 text-[10px] text-dim italic">
-          {[...Array(5)].map((_, i) => (
-            <div key={i} className="border border-border/40 p-2.5 min-h-[110px] flex items-center justify-center text-dim/50">
-              —
+      )}
+
+      {/* Streaming feedback — always visible while the council runs */}
+      {(running || (!verdict && displayRoles.length > 0)) && (
+        <>
+          {displayRoles.length > 0 ? (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
+              {displayRoles.map((role) => {
+                const peerRank = aggregateRankings
+                  ? aggregateRankings.findIndex((ar) => ar.role === role) + 1
+                  : undefined;
+                return (
+                  <AgentPanel
+                    key={role}
+                    role={role}
+                    result={displayAgentMap[role]}
+                    loading={loadingRoles.has(role)}
+                    peerRank={peerRank || undefined}
+                    totalPeers={aggregateRankings?.length}
+                  />
+                );
+              })}
             </div>
-          ))}
-        </div>
-      )}
-
-      {/* Peer review loading */}
-      {stage2Loading && (
-        <div className="text-[10px] text-dim animate-pulse mb-2 tracking-[1px] uppercase">
-          ◈ Peer review in progress — analysts reviewing each other anonymously…
-        </div>
-      )}
-
-      {/* Synthesizer loading */}
-      {synthLoading && (
-        <div className="text-[10px] text-amber animate-pulse mb-2 tracking-[1px] uppercase">
-          ◈ Chief Investment Officer synthesizing verdict…
-        </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3 text-[10px] text-dim italic">
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="border border-border/40 p-2.5 min-h-[110px] flex items-center justify-center text-dim/50">
+                  —
+                </div>
+              ))}
+            </div>
+          )}
+          {stage2Loading && (
+            <div className="text-[10px] text-dim animate-pulse mb-2 tracking-[1px] uppercase">
+              ◈ Peer review in progress — analysts reviewing each other anonymously…
+            </div>
+          )}
+          {synthLoading && (
+            <div className="text-[10px] text-amber animate-pulse mb-2 tracking-[1px] uppercase">
+              ◈ Chief Investment Officer synthesizing verdict…
+            </div>
+          )}
+        </>
       )}
 
       {/* Error */}
@@ -277,42 +317,29 @@ export function CouncilCard({ ticker, assetClass, currentPrice = null, position 
         </div>
       )}
 
-      {/* Directive banner — the actionable, position-aware call (primary signal) */}
+      {/* CLEAN LAYER — directive + band meaning + key prices; everything else behind EXPLAIN */}
       {verdict && directive && (
         <div className="mb-2">
+          {isPeek && (
+            <div className="text-[9px] text-dim italic mb-1 px-0.5">
+              {viewMode === "position"
+                ? "hypothetical — you hold nothing; this is what the council would say if you did"
+                : "hypothetical — you hold this; this is the fresh-entry view"}
+            </div>
+          )}
           <DirectiveCard
             directive={directive}
             currency={verdict.currency}
             showConfidence
             confidence={verdict.confidence}
             verdict={verdict.verdict}
+            bandText={bandExplanation(verdict.confidence, viewMode === "position" ? "holding" : "flat")}
+            showLevels
           />
-          {verdict.summary && (
-            <div className="text-[10px] text-dim leading-relaxed mt-1.5 px-0.5">
-              {verdict.summary}
-            </div>
-          )}
         </div>
       )}
 
-      {/* Plain-English explanation */}
-      {verdict && verdict.laymanExplanation && (
-        <LaymanCard
-          verdict={verdict.verdict}
-          layman={verdict.laymanExplanation}
-        />
-      )}
-
-      {/* Trade Levels sub-card */}
-      {verdict && verdict.tradeLevels && (
-        <TradeLevelsCard
-          verdict={verdict.verdict}
-          levels={verdict.tradeLevels}
-          currency={currencySymbol(verdict.currency)}
-        />
-      )}
-
-      {/* Footer: button + debate toggle */}
+      {/* Footer: convene + EXPLAIN toggle */}
       <div className="flex items-center gap-2 flex-wrap">
         <button
           onClick={convene}
@@ -325,37 +352,80 @@ export function CouncilCard({ ticker, assetClass, currentPrice = null, position 
         >
           {running ? "convening…" : verdict ? "re-convene council" : "convene council"}
         </button>
-        {verdict && verdict.agents.length > 0 && (
+        {verdict && (
           <button
-            onClick={() => setShowDebate((s) => !s)}
-            className="text-[9px] text-dim hover:text-muted uppercase tracking-[1px] transition-colors"
+            onClick={() => setShowExplain((s) => !s)}
+            className="text-[9px] text-dim hover:text-muted uppercase tracking-[1px] transition-colors cursor-pointer"
           >
-            {showDebate ? "hide debate" : "view debate log"}
+            {showExplain ? "▾ hide reasoning" : "▸ explain"}
           </button>
         )}
       </div>
 
-      {/* Debate log */}
-      {showDebate && verdict && (
-        <div className="mt-3 border border-border/40 bg-black/30 p-2.5 space-y-2.5 max-h-72 overflow-y-auto">
-          {verdict.agents.map((a) => (
-            <div key={a.role} className="text-[10px]">
-              <div className="text-amber uppercase tracking-[1px] mb-0.5">
-                {a.role} · {a.signal.toUpperCase()} · {a.confidence}%
-              </div>
-              <p className="text-text leading-relaxed">{a.thesis}</p>
-              {Array.isArray(a.keyPoints) && a.keyPoints.length > 0 && (
-                <ul className="mt-1 space-y-0.5">
-                  {a.keyPoints.map((pt, i) => (
-                    <li key={i} className="text-dim flex gap-1">
-                      <span className="text-amber shrink-0">›</span>
-                      <span>{pt}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+      {/* EXPLAIN — agent grid, summary, plain english, trade levels, debate */}
+      {showExplain && verdict && (
+        <div className="mt-3 space-y-2">
+          {!running && displayRoles.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {displayRoles.map((role) => {
+                const peerRank = aggregateRankings
+                  ? aggregateRankings.findIndex((ar) => ar.role === role) + 1
+                  : undefined;
+                return (
+                  <AgentPanel
+                    key={role}
+                    role={role}
+                    result={displayAgentMap[role]}
+                    loading={loadingRoles.has(role)}
+                    peerRank={peerRank || undefined}
+                    totalPeers={aggregateRankings?.length}
+                  />
+                );
+              })}
             </div>
-          ))}
+          )}
+
+          {verdict.summary && (
+            <div className="text-[10px] text-dim leading-relaxed px-0.5">
+              {verdict.summary}
+            </div>
+          )}
+
+          {verdict.laymanExplanation && (
+            <LaymanCard verdict={verdict.verdict} layman={verdict.laymanExplanation} />
+          )}
+
+          {verdict.tradeLevels && (
+            <TradeLevelsCard
+              verdict={verdict.verdict}
+              levels={verdict.tradeLevels}
+              currency={currencySymbol(verdict.currency)}
+            />
+          )}
+
+          {verdict.agents.length > 0 && (
+            <div className="border border-border/40 bg-black/30 p-2.5 space-y-2.5 max-h-72 overflow-y-auto">
+              <div className="text-muted text-[9px] uppercase tracking-[1px]">◈ debate log</div>
+              {verdict.agents.map((a) => (
+                <div key={a.role} className="text-[10px]">
+                  <div className="text-amber uppercase tracking-[1px] mb-0.5">
+                    {a.role} · {a.signal.toUpperCase()} · {a.confidence}%
+                  </div>
+                  <p className="text-text leading-relaxed">{a.thesis}</p>
+                  {Array.isArray(a.keyPoints) && a.keyPoints.length > 0 && (
+                    <ul className="mt-1 space-y-0.5">
+                      {a.keyPoints.map((pt, i) => (
+                        <li key={i} className="text-dim flex gap-1">
+                          <span className="text-amber shrink-0">›</span>
+                          <span>{pt}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

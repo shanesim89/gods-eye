@@ -145,6 +145,9 @@ export default async function OptionsPage() {
         totalPremiumIncome: premiumIncome,
         totalRealizedPnl,
         collateralReserved,
+        targetDelta: settings.target_delta,
+        dteMin: settings.dte_min,
+        dteMax: settings.dte_max,
       };
     })
   );

@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { IndexScore } from "@/lib/global-indices";
+import { indexBandExplanation } from "@/lib/council/display";
 import { WORLD_DOTS } from "./world-dots";
 
 const W = 900, H = 440;
@@ -171,7 +172,13 @@ export function GlobalHologramMap({ data }: { data: IndexScore[] }) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   const [pinnedKey, setPinnedKey] = useState<string | null>(null);
+  const [pinnedExplain, setPinnedExplain] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+
+  // Pinned card opens clean each time a new index is pinned.
+  useEffect(() => {
+    setPinnedExplain(false);
+  }, [pinnedKey]);
   const [boot, setBoot] = useState<number>(0);
 
   // boot timeline — once per session
@@ -532,6 +539,20 @@ export function GlobalHologramMap({ data }: { data: IndexScore[] }) {
                         style={{ background: "transparent", border: "1px solid rgba(64,200,224,.22)", color: "#9fe4f2", cursor: "pointer", width: 18, height: 18, fontSize: 9, lineHeight: 1, padding: 0 }}>✕</button>
                     </div>
 
+                    {/* ── One-line meaning (always visible) ── */}
+                    <div style={{ fontSize: 8.5, color: "#8eccd9", lineHeight: 1.6, marginBottom: 8 }}>
+                      {indexBandExplanation(s)}
+                    </div>
+
+                    {/* ── EXPLAIN toggle ── */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setPinnedExplain((v) => !v); }}
+                      style={{ background: "none", border: "1px solid rgba(64,200,224,.18)", color: "#5b7d8a", fontSize: 7.5, letterSpacing: 1.5, textTransform: "uppercase", cursor: "pointer", fontFamily: "monospace", padding: "4px 9px", marginBottom: 8 }}
+                    >
+                      {pinnedExplain ? "▾ HIDE BREAKDOWN" : "▸ EXPLAIN — FULL BREAKDOWN"}
+                    </button>
+
+                    {pinnedExplain && (<>
                     {/* ── Section 2: Returns ── */}
                     {m && (
                       <>
@@ -629,6 +650,7 @@ export function GlobalHologramMap({ data }: { data: IndexScore[] }) {
                         ▸ {reasons.thesis}
                       </div>
                     )}
+                    </>)}
 
                     {/* price + session */}
                     <div style={{ marginTop: 8, paddingTop: 7, borderTop: "1px solid rgba(70,224,245,.08)", display: "flex", justifyContent: "space-between", fontSize: 8.5 }}>

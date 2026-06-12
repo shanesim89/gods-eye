@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { gateLabel, GATE_OUTCOME_COLORS, type GateTrace } from "@/lib/trading/gates";
 
 export type OrderRow = {
   id: string;
@@ -16,6 +17,15 @@ export type OrderRow = {
   dipDepthPct: number | null;
   error: string | null;
   exchangeOrderId: string | null;
+  gateTrace: GateTrace | null; // null on rows written before trace deploy
+};
+
+export type TokenPlan = {
+  nextRunAt: string | null; // ISO
+  plannedUsd: number;
+  boostUsd: number;
+  consecutiveSkips: number;
+  maxSkips: number;
 };
 
 const TOKEN_COLOR: Record<string, string> = {
@@ -44,7 +54,7 @@ function fmtDateTime(iso: string): string {
 
 type Filter = "all" | "filled" | "skipped" | "failed";
 
-export function OrderLog({ orders }: { orders: OrderRow[] }) {
+export function OrderLog({ orders, planByToken = {} }: { orders: OrderRow[]; planByToken?: Record<string, TokenPlan> }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -147,6 +157,63 @@ export function OrderLog({ orders }: { orders: OrderRow[] }) {
                 </div>
                 {isExp && (
                   <div style={{ padding: "4px 8px 12px 8px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px,1fr))", gap: 8, fontSize: 9 }}>
+                    {/* gate-by-gate decision trace */}
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <div style={{ fontSize: 7, letterSpacing: 1, color: "#5b7d8a", textTransform: "uppercase", marginBottom: 4 }}>DECISION GATES</div>
+                      {o.gateTrace ? (
+                        <>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {o.gateTrace.gates.map((g) => {
+                              const gc = GATE_OUTCOME_COLORS[g.outcome] ?? "#365360";
+                              const dimmed = g.outcome === "not_reached";
+                              return (
+                                <span
+                                  key={g.id}
+                                  title={g.detail ?? g.outcome}
+                                  style={{
+                                    fontSize: 7, letterSpacing: 1, textTransform: "uppercase",
+                                    color: gc, background: dimmed ? "transparent" : `${gc}14`,
+                                    border: `1px solid ${dimmed ? "rgba(54,83,96,.4)" : `${gc}55`}`,
+                                    padding: "3px 6px", whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {g.outcome === "pass" ? "✓" : g.outcome === "not_reached" ? "·" : "✕"} {gateLabel(g.id)}
+                                </span>
+                              );
+                            })}
+                          </div>
+                          {(() => {
+                            const stopped = o.gateTrace.gates.find((g) => (g.outcome === "halt" || g.outcome === "fail" || g.outcome === "skip") && g.detail);
+                            return stopped ? (
+                              <div style={{ fontSize: 9, color: "#ffb3c0", marginTop: 4, lineHeight: 1.5 }}>
+                                ✕ {gateLabel(stopped.id)}: {stopped.detail}
+                              </div>
+                            ) : null;
+                          })()}
+                        </>
+                      ) : (
+                        <div style={{ fontSize: 9, color: "#365360", letterSpacing: 0.5 }}>
+                          GATE TRACE UNAVAILABLE — recorded for orders after trace deploy
+                        </div>
+                      )}
+                    </div>
+
+                    {/* what the strategy plans next for this token */}
+                    {planByToken[o.token] && (
+                      <div style={{ gridColumn: "1 / -1", border: "1px solid rgba(64,200,224,.1)", background: "rgba(70,224,245,.02)", padding: "6px 8px" }}>
+                        <div style={{ fontSize: 7, letterSpacing: 1, color: "#5b7d8a", textTransform: "uppercase" }}>PLAN FOR {o.token}</div>
+                        <div style={{ fontSize: 9, color: "#8fb8c4", marginTop: 3, lineHeight: 1.6, fontVariantNumeric: "tabular-nums" }}>
+                          {(() => {
+                            const p = planByToken[o.token];
+                            const next = p.nextRunAt
+                              ? new Date(p.nextRunAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }).toUpperCase()
+                              : "DUE NOW";
+                            return `NEXT RUN ${next} · PLANNED ${usd(p.plannedUsd, 0)} (BOOST ${usd(p.boostUsd, 0)} if dip) · SKIPS ${p.consecutiveSkips}/${p.maxSkips}`;
+                          })()}
+                        </div>
+                      </div>
+                    )}
+
                     {[
                       { l: "QTY FILLED", v: o.qty != null ? o.qty.toFixed(8) : "—" },
                       { l: "DIP DEPTH", v: o.dipDepthPct != null ? `${o.dipDepthPct.toFixed(1)}%` : "—" },

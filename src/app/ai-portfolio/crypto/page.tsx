@@ -16,8 +16,10 @@ import { KillSwitch as KillSwitchClient } from "./KillSwitch";
 import { HudCard, type TokenRow } from "./HudCard";
 import { PortfolioSummary, type AllocSlice } from "./PortfolioSummary";
 import { StrategyThesis, type TokenThesis } from "./StrategyThesis";
-import { OrderLog, type OrderRow } from "./OrderLog";
+import { OrderLog, type OrderRow, type TokenPlan } from "./OrderLog";
 import { CouncilReasoning } from "./CouncilReasoning";
+import { StrategyPlan, type PlanRow } from "./StrategyPlan";
+import { parseGateTrace } from "@/lib/trading/gates";
 
 export const dynamic = "force-dynamic";
 
@@ -222,7 +224,29 @@ export default async function CryptoDashboard() {
     dipDepthPct: o.dip_depth_pct ? parseFloat(o.dip_depth_pct) : null,
     error: o.error,
     exchangeOrderId: o.exchange_order_id,
+    gateTrace: parseGateTrace(o.gate_trace),
   }));
+
+  // Forward plan per token (PLAN panel + expanded order rows)
+  const planRows: PlanRow[] = rows.map((r) => ({
+    token: r.token,
+    nextRunAt: r.nextRun ? r.nextRun.toISOString() : null,
+    plannedUsd: dca,
+    boostUsd: boost,
+    consecutiveSkips: r.consecutiveSkips,
+    maxSkips: maxConsecutiveSkips,
+    maxPrice: r.maxPrice,
+    price: r.price,
+  }));
+  const planByToken: Record<string, TokenPlan> = Object.fromEntries(
+    planRows.map((p) => [p.token, {
+      nextRunAt: p.nextRunAt,
+      plannedUsd: p.plannedUsd,
+      boostUsd: p.boostUsd,
+      consecutiveSkips: p.consecutiveSkips,
+      maxSkips: p.maxSkips,
+    }])
+  );
 
   return (
     <Panel title="AI PORTFOLIO · CRYPTO" meta="DCA + COUNCIL BUY-ZONE">
@@ -278,6 +302,9 @@ export default async function CryptoDashboard() {
         breakdown={breakdown}
       />
 
+      {/* forward plan — next runs, sizes, skip counters, cap status */}
+      <StrategyPlan rows={planRows} spent={spent} cap={cap} killSwitch={settings.kill_switch} />
+
       {/* per-coin council reasoning toggle */}
       <CouncilReasoning entries={reasoning} />
 
@@ -289,7 +316,7 @@ export default async function CryptoDashboard() {
       </div>
 
       {/* per-buy order history */}
-      <OrderLog orders={orderLog} />
+      <OrderLog orders={orderLog} planByToken={planByToken} />
     </Panel>
   );
 }

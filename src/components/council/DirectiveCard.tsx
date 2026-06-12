@@ -15,6 +15,8 @@ export function DirectiveCard({
   showConfidence = false,
   confidence,
   verdict,
+  bandText,
+  showLevels,
 }: {
   directive: Directive;
   currency?: string;
@@ -22,6 +24,8 @@ export function DirectiveCard({
   showConfidence?: boolean;
   confidence?: number;
   verdict?: VerdictType;
+  bandText?: string; // band-for-your-situation explanation, shown under oneLiner
+  showLevels?: boolean; // force entry/target/stop grid even when held (defaults to !held)
 }) {
   const color = directiveColor(directive.tone);
   const { stance, headline, oneLiner, triggerPrice, entry, stop, target, pnlContext, held } = directive;
@@ -62,6 +66,9 @@ export function DirectiveCard({
           </div>
           <div style={{ fontSize: 11, color: HUD.amber, letterSpacing: 0.5, marginBottom: 2 }}>{headline}</div>
           <div style={{ fontSize: 11, color: HUD.text, lineHeight: 1.5 }}>{oneLiner}</div>
+          {bandText && (
+            <div style={{ fontSize: 9, color: HUD.dim, lineHeight: 1.5, marginTop: 3, fontStyle: "italic" }}>{bandText}</div>
+          )}
           {pnlContext && (
             <div style={{ fontSize: 9, color: HUD.dim, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>{pnlContext}</div>
           )}
@@ -78,7 +85,7 @@ export function DirectiveCard({
         </div>
       )}
 
-      {!held && (entry || stop || target) && (
+      {(showLevels ?? !held) && (entry || stop || target) && (
         <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
           {cell("ENTRY", entry ? `${fmtLevel(entry.low, currency)}–${fmtLevel(entry.high, currency)}` : "—", HUD.amber)}
           {cell("TARGET", target ? `${fmtLevel(target.low, currency)}–${fmtLevel(target.high, currency)}` : "—", HUD.bull)}

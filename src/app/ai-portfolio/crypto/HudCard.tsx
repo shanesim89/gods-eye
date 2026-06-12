@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import type { Verdict } from "@/lib/council/types";
 import type { BuyZoneResult } from "@/lib/trading/buy-zone";
 import { resolveDirective } from "@/lib/council/directive";
-import { verdictColor as vColor } from "@/lib/council/display";
+import { bandExplanation, verdictColor as vColor } from "@/lib/council/display";
 import { ConfidenceGauge } from "@/components/council/ConfidenceGauge";
 import { DirectiveCard } from "@/components/council/DirectiveCard";
 
@@ -229,6 +229,11 @@ export function HudCard({ row }: { row: TokenRow }) {
       {directive && (
         <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(64,200,224,.15)" }}>
           <DirectiveCard directive={directive} currency={verdict?.currency} variant="compact" />
+          {verdict && (
+            <div style={{ fontSize: 8.5, color: "#5b7d8a", fontStyle: "italic", marginTop: 5, lineHeight: 1.5 }}>
+              {bandExplanation(verdict.confidence, qty > 0 ? "holding" : "flat")}
+            </div>
+          )}
         </div>
       )}
 

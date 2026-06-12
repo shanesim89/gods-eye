@@ -120,3 +120,22 @@ describe("degrade safely", () => {
     expect(resolveDirective(inp({ verdict: "BUY", currentPrice: null, position: held() })).stance).toBe("HOLD");
   });
 });
+
+describe("peek mode (synthetic positions)", () => {
+  const peekHeld: Position = { held: true, qty: 0, costBasis: null };
+  it("synthetic held {qty:0, costBasis:null} does not throw, pnlContext null", () => {
+    const d = resolveDirective(inp({ verdict: "BUY", currentPrice: 105, position: peekHeld }));
+    expect(d.held).toBe(true);
+    expect(["ADD", "HOLD", "TRIM", "EXIT"]).toContain(d.stance);
+    expect(d.pnlContext ?? null).toBeNull();
+  });
+  it("synthetic held with SELL verdict resolves a held stance", () => {
+    const d = resolveDirective(inp({ verdict: "SELL", currentPrice: 120, position: peekHeld }));
+    expect(["HOLD", "TRIM", "EXIT"]).toContain(d.stance);
+  });
+  it("flat peek while actually holding mirrors resolveFlat", () => {
+    const d = resolveDirective(inp({ verdict: "BUY", currentPrice: 105, position: { held: false } }));
+    expect(d.stance).toBe("LONG");
+    expect(d.held).toBe(false);
+  });
+});
