@@ -125,7 +125,26 @@ export async function runDcaForUser(
     .where(eq(ai_token_schedule.user_id, userId));
   const schedByToken = new Map(schedRows.map((r) => [r.token, r]));
 
-  for (const token of tokens) {
+  // Fairness: process the most-overdue tokens first (oldest next_run_at). The
+  // cron has a 60s function-duration cap and council is ~9 sequential LLM calls
+  // per token, so a run can be killed mid-loop. Fixed array order would always
+  // starve the same tail tokens; sorting by due time guarantees the
+  // longest-waiting token is served each run. Missing schedule = first run =
+  // top priority (epoch 0).
+  const orderedTokens = [...tokens].sort((a, b) => {
+    const dueA = schedByToken.get(a)?.next_run_at?.getTime() ?? 0;
+    const dueB = schedByToken.get(b)?.next_run_at?.getTime() ?? 0;
+    return dueA - dueB;
+  });
+
+  // Council is ~9 sequential LLM calls per token; on Hobby's 60s function cap a
+  // single run can only afford a few. Cap councils per invocation so the loop
+  // never times out mid-write. Deferred tokens keep their (overdue) next_run, so
+  // fairness ordering serves them first on the next daily run.
+  const MAX_COUNCIL_PER_RUN = 1;
+  let councilRuns = 0;
+
+  for (const token of orderedTokens) {
     // Per-run gate trace, persisted onto whatever order row this iteration writes.
     const trace = newTrace().pass("kill_switch");
     try {
@@ -163,8 +182,17 @@ export async function runDcaForUser(
       }
       trace.pass("price_ceiling", maxPrice !== undefined ? `price ${price} ≤ ceiling ${maxPrice}` : "no ceiling set");
 
+      // GUARDRAIL 3b-2: council budget — stay under the 60s function cap. Defer
+      // this token (leave schedule untouched → still due → picked up first next
+      // run via fairness ordering) rather than risk a mid-loop timeout.
+      if (councilRuns >= MAX_COUNCIL_PER_RUN) {
+        outcomes.push({ token, status: "skipped", reason: "council budget reached this run — deferred to next run" });
+        continue;
+      }
+
       // Council (in-process, cached) → verdict. Only reached when price ≤ ceiling.
       const verdict = await runCouncil(userId, "crypto", token);
+      councilRuns++;
       trace.pass("council", `${verdict.verdict} ${verdict.confidence}%`);
 
       // GUARDRAIL 3c: SELL-skip gate — skip period if strong SELL and skips not maxed.
