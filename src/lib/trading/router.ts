@@ -1,14 +1,21 @@
 import "server-only";
 import type { ExchangeAdapter, Venue } from "./exchange";
 import { HyperliquidAdapter } from "./hyperliquid";
+import { OkxAdapter } from "./okx";
 
-// All tokens routed through Hyperliquid spot.
+// Venue routing by asset. Hyperliquid spot only lists its native token (HYPE)
+// among our universe; the major coins (BTC/ETH/SOL) are not on HL spot, so they
+// route to OKX V5 spot instead.
 const hyperliquid = new HyperliquidAdapter();
+const okx = new OkxAdapter();
 
-export function venueFor(_token: string): Venue {
-  return "hyperliquid";
+// Tokens that trade on Hyperliquid spot. Everything else → OKX.
+const HL_SPOT = new Set(["HYPE"]);
+
+export function venueFor(token: string): Venue {
+  return HL_SPOT.has(token.toUpperCase()) ? "hyperliquid" : "okx";
 }
 
-export function adapterFor(_token: string): ExchangeAdapter {
-  return hyperliquid;
+export function adapterFor(token: string): ExchangeAdapter {
+  return HL_SPOT.has(token.toUpperCase()) ? hyperliquid : okx;
 }
