@@ -8,6 +8,8 @@ import {
   uuid,
   primaryKey,
   boolean,
+  date,
+  index,
 } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
@@ -146,6 +148,47 @@ export const council_verdict_cache = pgTable("council_verdict_cache", {
   fetched_at: timestamp("fetched_at").defaultNow().notNull(),
 });
 
+// ─── Crypto Scanner History ──────────────────────────────────────────────────
+
+export const scanner_history = pgTable(
+  "scanner_history",
+  {
+    scanned_date: date("scanned_date").notNull(),
+    coin_id: text("coin_id").notNull(),
+    symbol: text("symbol").notNull(),
+    name: text("name").notNull(),
+    score_moonshot: integer("score_moonshot").notNull(),
+    score_scalp: integer("score_scalp").notNull(),
+    rank_moonshot: integer("rank_moonshot").notNull(),
+    rank_scalp: integer("rank_scalp").notNull(),
+    price: numeric("price", { precision: 18, scale: 8 }).notNull(),
+    mcap: numeric("mcap", { precision: 18, scale: 2 }).notNull(),
+    dims: jsonb("dims").notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.scanned_date, t.coin_id] }),
+    symbol_idx: index("scanner_history_symbol_idx").on(t.symbol),
+    date_idx: index("scanner_history_date_idx").on(t.scanned_date),
+  })
+);
+
+// ─── Scanner Watchlist ────────────────────────────────────────────────────────
+
+export const scanner_watchlist = pgTable(
+  "scanner_watchlist",
+  {
+    user_id: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+    coin_id: text("coin_id").notNull(),
+    symbol: text("symbol").notNull(),
+    name: text("name").notNull(),
+    added_at: timestamp("added_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.user_id, t.coin_id] }),
+    user_idx: index("scanner_watchlist_user_idx").on(t.user_id),
+  })
+);
+
 // ─── AI Portfolio: automated trading ─────────────────────────────────────────
 
 // One row per user. kill_switch defaults TRUE = HALTED until user explicitly arms.
@@ -163,6 +206,13 @@ export const ai_trading_settings = pgTable("ai_trading_settings", {
   tokens: jsonb("tokens").default(["BTC", "ETH", "SOL", "HYPE"]).notNull(),
   // Per-token overrides: { "HYPE": { "max_price": 58 }, "BTC": { "max_price": 100000 } }
   token_overrides: jsonb("token_overrides").default({}).notNull(),
+  // One-shot BTC-dip trigger: when armed and BTC < dip_trigger_price, fire an
+  // unconditional dip_trigger_amount buy across all tokens once, then set
+  // dip_trigger_fired and resume normal council DCA.
+  dip_trigger_enabled: boolean("dip_trigger_enabled").default(false).notNull(),
+  dip_trigger_price: numeric("dip_trigger_price", { precision: 18, scale: 2 }),
+  dip_trigger_amount: numeric("dip_trigger_amount", { precision: 18, scale: 2 }),
+  dip_trigger_fired: boolean("dip_trigger_fired").default(false).notNull(),
   last_alert: text("last_alert"),
   updated_at: timestamp("updated_at").defaultNow().notNull(),
 });

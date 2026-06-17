@@ -119,6 +119,74 @@ export async function runDcaForUser(
 
   await alertStalePending(userId, now);
 
+  // ── GUARDRAIL 2b: one-shot BTC-dip trigger ───────────────────────────────
+  // When armed and BTC trades below the threshold, fire an UNCONDITIONAL buy of
+  // dip_trigger_amount across every token — ignores council + price ceilings
+  // (deliberate "buy the crash" event), still bounded by the monthly cap and
+  // available balance. Fires once, disarms, then this run returns so normal
+  // council DCA resumes on the next invocation (no double-spend same run).
+  if (settings.dip_trigger_enabled && !settings.dip_trigger_fired) {
+    const threshold = Number(settings.dip_trigger_price ?? 0);
+    const dipAmount = Number(settings.dip_trigger_amount ?? 0);
+    let btcPrice = 0;
+    try {
+      btcPrice = await adapterFor("BTC").getPrice("BTC");
+    } catch {
+      btcPrice = 0;
+    }
+    if (threshold > 0 && dipAmount > 0 && btcPrice > 0 && btcPrice < threshold) {
+      for (const token of tokens) {
+        const trace = newTrace().pass("kill_switch").pass("dip_trigger", `BTC ${btcPrice} < ${threshold}`);
+        const idemKey = `${userId}:${token}:dip:${threshold}`;
+        try {
+          const claim = await atomicCapClaim({
+            userId, token, venue: venueFor(token),
+            amountUsd: dipAmount, capUsd: cap, idemKey, dcaAmountUsd: dipAmount,
+          });
+          if (!claim.claimed) {
+            outcomes.push({
+              token, status: "skipped", amount: dipAmount,
+              reason: claim.reason === "cap_exceeded" ? "dip: monthly cap" : "dip: already bought",
+            });
+            continue;
+          }
+          const adapter = adapterFor(token);
+          const balance = await adapter.getUsdBalance();
+          if (balance < dipAmount) {
+            await db.update(ai_trade_orders)
+              .set({ status: "skipped", usd_amount: dipAmount.toFixed(2), error: `dip: insufficient balance ${balance} < ${dipAmount}`, gate_trace: trace.done() })
+              .where(eq(ai_trade_orders.id, claim.orderId));
+            outcomes.push({ token, status: "skipped", amount: dipAmount, reason: "dip: insufficient balance" });
+            continue;
+          }
+          const fill = await adapter.marketBuy(token, dipAmount);
+          const fillUsd = fill.qty * fill.price;
+          await db.update(ai_trade_orders)
+            .set({ status: "filled", usd_amount: fillUsd.toFixed(2), qty: fill.qty.toFixed(8), price: fill.price.toFixed(8), exchange_order_id: fill.orderId, gate_trace: trace.done() })
+            .where(eq(ai_trade_orders.id, claim.orderId));
+          await creditHolding(userId, token, fill.qty, fillUsd);
+          outcomes.push({ token, status: "filled", amount: dipAmount, reason: "dip-buy" });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "unknown error";
+          await db.update(ai_trade_orders)
+            .set({ status: "failed", error: msg, gate_trace: trace.done() })
+            .where(eq(ai_trade_orders.idempotency_key, idemKey));
+          await setAlert(userId, `${token} DIP-BUY FAILED — ${msg}`);
+          outcomes.push({ token, status: "failed", reason: msg });
+        }
+      }
+      // One-shot: disarm so it never re-fires; council DCA resumes next run.
+      await db.update(ai_trading_settings)
+        .set({
+          dip_trigger_fired: true,
+          last_alert: `${new Date().toISOString()} — BTC dip $${btcPrice} < $${threshold}: fired $${dipAmount} dip-buy across ${tokens.length} tokens`,
+          updated_at: new Date(),
+        })
+        .where(eq(ai_trading_settings.user_id, userId));
+      return { ran: true, reason: "dip-trigger fired", outcomes };
+    }
+  }
+
   const schedRows = await db
     .select()
     .from(ai_token_schedule)
