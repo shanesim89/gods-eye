@@ -382,6 +382,86 @@ def block_dipbounce(cur) -> str:
     return "\n".join(lines)
 
 
+def block_options(cur) -> str:
+    lines = ["📈 <b>OPTIONS WHEEL</b> <i>(paper)</i>"]
+    try:
+        uid = DCA_USER_ID
+        # settled metrics
+        cur.execute(
+            """
+            SELECT strategy, status, underlying, strike, expiry,
+                   realized_pnl::float, entry_premium::float,
+                   contract_multiplier::float, council_verdict,
+                   council_confidence, contracts, collateral_usd::float, opened_at
+            FROM ai_options_positions
+            WHERE user_id = %s
+            ORDER BY opened_at DESC
+            """,
+            (uid,),
+        )
+        rows = cur.fetchall()
+        open_rows    = [r for r in rows if r[1] == "open"]
+        settled_rows = [r for r in rows if r[1] != "open"]
+
+        total_pnl  = sum(r[5] or 0 for r in settled_rows)
+        wins       = sum(1 for r in settled_rows if (r[5] or 0) > 0)
+        n_settled  = len(settled_rows)
+        win_rate   = wins / n_settled if n_settled else 0.0
+
+        directed   = [(r[5], r[8]) for r in settled_rows if r[8] not in (None, "HOLD")]
+        council_acc = round(sum(1 for pnl, _ in directed if (pnl or 0) > 0) / max(len(directed), 1), 3)
+
+        # params
+        cur.execute(
+            "SELECT conviction_threshold, target_delta, dte_min, dte_max FROM ai_options_settings WHERE user_id = %s",
+            (uid,),
+        )
+        prow = cur.fetchone()
+        ct   = int(prow[0]) if prow else 70
+        td   = int(prow[1]) if prow else 22
+        dte  = f"{int(prow[2])}-{int(prow[3])}d" if prow else "?"
+
+        lines.append(
+            f" ✅ · settled {n_settled} trades · PnL {total_pnl:+.2f} · WR {win_rate*100:.0f}%"
+            f" · council_acc {council_acc:.0%}"
+        )
+        lines.append(f" params: delta={td}, DTE={dte}, conviction≥{ct}")
+
+        # open positions
+        if open_rows:
+            now = datetime.now(timezone.utc)
+            lines.append(" open positions:")
+            for r in open_rows:
+                _, _, underlying, strike, expiry, _, prem, mult, verdict, conf, contracts, collateral, opened_at = r
+                dte_left = (expiry - now).days if expiry else "?"
+                prem_total = float(prem) * float(mult) * int(contracts)
+                lines.append(
+                    f"  · {underlying} CSP ${float(strike):,.0f} exp {expiry.strftime('%d %b') if expiry else '?'}"
+                    f" ({dte_left}d) · prem {prem_total:.2f} · col {_usd(float(collateral))}"
+                    f" · council {verdict}/{conf}"
+                )
+        else:
+            lines.append(" open positions: none")
+
+        # 24h activity
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        recent_24h = [r for r in rows if r[12] and r[12] >= cutoff]
+        if recent_24h:
+            lines.append(" 24h:")
+            for r in recent_24h:
+                strat, status, underlying, strike, expiry, pnl, *_ = r
+                pnl_str = f" PnL {pnl:+.2f}" if pnl is not None else ""
+                lines.append(f"  · {underlying} {strat.upper()} {status}{pnl_str}")
+        else:
+            lines.append(" 24h: no new positions")
+
+        lines.append(f" 💬 {n_settled} CSP expired worthless · conviction_threshold lowered to {ct} → more signals")
+
+    except Exception as e:
+        lines.append(f" ⚠️ error: {str(e)[:100]}")
+    return "\n".join(lines)
+
+
 def block_dca(cur) -> str:
     lines = ["💰 <b>CRYPTO DCA</b> <i>(live)</i>"]
     try:
@@ -503,6 +583,7 @@ def build_digest() -> str:
             block_gold(cur),
             block_mcscalp(cur),
             block_dipbounce(cur),
+            block_options(cur),
             block_dca(cur),
         ]
     return header + "\n\n" + "\n\n".join(blocks)
