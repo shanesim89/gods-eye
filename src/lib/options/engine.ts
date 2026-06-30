@@ -16,7 +16,7 @@ import type { OptionsStrategyConfig } from "./strategy";
 import type { Underlying } from "./settings";
 import { newTrace, WHEEL_GATES } from "@/lib/trading/gates";
 
-const WEEK_MS = 14 * 86_400_000;
+const WEEK_MS = 7 * 86_400_000;
 
 export type OptionOutcome = {
   underlying: string;
@@ -512,7 +512,7 @@ export async function runOptionsForUser(
       const nextRun7 = new Date(now.getTime() + WEEK_MS);
       await db
         .insert(ai_options_wheel)
-        .values({ user_id: userId, underlying: symbol, state: wheel?.state ?? "cash", shares: wheel?.shares ?? "0", cost_basis: wheel?.cost_basis ?? null, next_run_at: nextRun7, updated_at: now })
+        .values({ user_id: userId, underlying: symbol, state: wheel?.state ?? (mode === "pmcc" ? "pmcc_cash" : "cash"), shares: wheel?.shares ?? "0", cost_basis: wheel?.cost_basis ?? null, next_run_at: nextRun7, updated_at: now })
         .onConflictDoUpdate({
           target: [ai_options_wheel.user_id, ai_options_wheel.underlying],
           set: { next_run_at: nextRun7, updated_at: now },
