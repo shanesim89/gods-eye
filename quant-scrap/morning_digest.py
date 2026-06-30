@@ -383,9 +383,18 @@ def block_dipbounce(cur) -> str:
 
 
 def block_options(cur) -> str:
-    lines = ["📈 <b>OPTIONS WHEEL</b> <i>(paper)</i>"]
+    lines = ["📈 <b>OPTIONS WHEEL+PMCC</b> <i>(paper)</i>"]
     try:
         uid = DCA_USER_ID
+
+        # strategy → short display label
+        def _strat_label(strat: str) -> str:
+            return {
+                "csp": "CSP", "cc": "CC",
+                "pmcc_leaps": "LEAPS", "pmcc_short": "PMCC-Call",
+                "long_call": "LONG-C", "long_put": "LONG-P",
+            }.get(strat, strat.upper())
+
         # settled metrics
         cur.execute(
             """
@@ -403,56 +412,84 @@ def block_options(cur) -> str:
         open_rows    = [r for r in rows if r[1] == "open"]
         settled_rows = [r for r in rows if r[1] != "open"]
 
-        total_pnl  = sum(r[5] or 0 for r in settled_rows)
-        wins       = sum(1 for r in settled_rows if (r[5] or 0) > 0)
-        n_settled  = len(settled_rows)
-        win_rate   = wins / n_settled if n_settled else 0.0
-
-        directed   = [(r[5], r[8]) for r in settled_rows if r[8] not in (None, "HOLD")]
+        total_pnl   = sum(r[5] or 0 for r in settled_rows)
+        wins        = sum(1 for r in settled_rows if (r[5] or 0) > 0)
+        n_settled   = len(settled_rows)
+        win_rate    = wins / n_settled if n_settled else 0.0
+        directed    = [(r[5], r[8]) for r in settled_rows if r[8] not in (None, "HOLD")]
         council_acc = round(sum(1 for pnl, _ in directed if (pnl or 0) > 0) / max(len(directed), 1), 3)
 
         # params
         cur.execute(
-            "SELECT conviction_threshold, target_delta, dte_min, dte_max FROM ai_options_settings WHERE user_id = %s",
+            """SELECT conviction_threshold, target_delta, dte_min, dte_max,
+                      pmcc_leaps_delta, pmcc_leaps_dte_min, pmcc_leaps_dte_max, pmcc_budget_usd,
+                      underlyings
+               FROM ai_options_settings WHERE user_id = %s""",
             (uid,),
         )
         prow = cur.fetchone()
-        ct   = int(prow[0]) if prow else 70
-        td   = int(prow[1]) if prow else 22
-        dte  = f"{int(prow[2])}-{int(prow[3])}d" if prow else "?"
+        ct           = int(prow[0])   if prow else 70
+        td           = int(prow[1])   if prow else 22
+        dte          = f"{int(prow[2])}-{int(prow[3])}d" if prow else "?"
+        leaps_delta  = int(prow[4])   if prow else 80
+        leaps_dte    = f"{int(prow[5])}-{int(prow[6])}d" if prow else "?"
+        pmcc_budget  = float(prow[7]) if prow else 2000.0
+        underlyings  = json.loads(prow[8]) if prow and isinstance(prow[8], str) else (prow[8] or []) if prow else []
 
         lines.append(
             f" ✅ · settled {n_settled} trades · PnL {total_pnl:+.2f} · WR {win_rate*100:.0f}%"
             f" · council_acc {council_acc:.0%}"
         )
-        lines.append(f" params: delta={td}, DTE={dte}, conviction≥{ct}")
+        lines.append(f" params: short Δ{td} {dte} cv≥{ct} | LEAPS Δ{leaps_delta} {leaps_dte} bud≤${pmcc_budget:,.0f}")
 
-        # strategy → short display label (csp wheel + pmcc diagonal + long plays)
-        def _strat_label(strat: str) -> str:
-            return {
-                "csp": "CSP", "cc": "CC",
-                "pmcc_leaps": "LEAPS", "pmcc_short": "PMCC-Call",
-                "long_call": "LONG-C", "long_put": "LONG-P",
-            }.get(strat, strat.upper())
+        # wheel state per underlying
+        cur.execute(
+            """SELECT underlying, state, leaps_strike, leaps_expiry, leaps_net_debit, leaps_contract_symbol, shares::float
+               FROM ai_options_wheel WHERE user_id = %s ORDER BY underlying""",
+            (uid,),
+        )
+        wheel_rows = {r[0]: r for r in cur.fetchall()}
+        und_modes  = {u["symbol"]: u.get("mode", "wheel") for u in underlyings}
+
+        lines.append(" underlying states:")
+        for sym, mode in sorted(und_modes.items()):
+            wr = wheel_rows.get(sym)
+            state = wr[1] if wr else ("pmcc_cash" if mode == "pmcc" else "cash")
+            if state == "pmcc_holding_leaps" and wr:
+                lk   = f"${float(wr[2]):,.0f}" if wr[2] else "?"
+                lexp = wr[3].strftime("%d %b %y") if wr[3] else "?"
+                lnet = f"${float(wr[4]):.2f}" if wr[4] else "?"
+                lsym = wr[5] or ""
+                open_shorts = [r for r in open_rows if r[2] == sym and r[0] == "pmcc_short"]
+                short_info  = f" · {len(open_shorts)} short call(s) open" if open_shorts else " · no short yet"
+                lines.append(f"  · {sym} [{mode.upper()}] LEAPS {lk} exp {lexp} debit {lnet}{short_info}")
+            elif state == "pmcc_cash":
+                lines.append(f"  · {sym} [{mode.upper()}] cash — awaiting LEAPS buy")
+            elif state == "holding_stock":
+                sh = float(wr[6]) if wr and wr[6] else 0
+                lines.append(f"  · {sym} [WHL] holding {sh:.4g} sh")
+            else:
+                lines.append(f"  · {sym} [{mode.upper()}] cash")
 
         # open positions
+        now = datetime.now(timezone.utc)
         if open_rows:
-            now = datetime.now(timezone.utc)
             lines.append(" open positions:")
             for r in open_rows:
                 strat, _, underlying, strike, expiry, _, prem, mult, verdict, conf, contracts, collateral, opened_at = r
-                dte_left = (expiry - now).days if expiry else "?"
+                dte_left  = (expiry - now).days if expiry else "?"
                 prem_total = float(prem) * float(mult) * int(contracts)
+                col_str    = f" · col {_usd(float(collateral))}" if float(collateral) > 0 else ""
                 lines.append(
-                    f"  · {underlying} {_strat_label(strat)} ${float(strike):,.0f} exp {expiry.strftime('%d %b') if expiry else '?'}"
-                    f" ({dte_left}d) · prem {prem_total:.2f} · col {_usd(float(collateral))}"
-                    f" · council {verdict}/{conf}"
+                    f"  · {underlying} {_strat_label(strat)} ${float(strike):,.0f}"
+                    f" exp {expiry.strftime('%d %b') if expiry else '?'} ({dte_left}d)"
+                    f" · prem {prem_total:.2f}{col_str} · {verdict}/{conf}"
                 )
         else:
             lines.append(" open positions: none")
 
         # 24h activity
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        cutoff = now - timedelta(hours=24)
         recent_24h = [r for r in rows if r[12] and r[12] >= cutoff]
         if recent_24h:
             lines.append(" 24h:")
@@ -463,7 +500,11 @@ def block_options(cur) -> str:
         else:
             lines.append(" 24h: no new positions")
 
-        lines.append(f" 💬 {n_settled} settled · conviction_threshold {ct} · Wheel+PMCC active")
+        # summary
+        n_leaps    = sum(1 for sym, wr in wheel_rows.items() if wr[1] == "pmcc_holding_leaps")
+        n_pmcc_csh = sum(1 for sym, wr in wheel_rows.items() if wr[1] == "pmcc_cash")
+        pmcc_note  = f"{n_leaps} LEAPS live" if n_leaps else (f"{n_pmcc_csh} awaiting LEAPS" if n_pmcc_csh else "no PMCC yet")
+        lines.append(f" 💬 {n_settled} settled · cv≥{ct} · PMCC: {pmcc_note}")
 
     except Exception as e:
         lines.append(f" ⚠️ error: {str(e)[:100]}")
