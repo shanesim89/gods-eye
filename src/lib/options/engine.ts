@@ -10,12 +10,13 @@ import {
 import { runCouncil } from "@/lib/council/run";
 import { getPrice, getPriceHistory } from "@/lib/market";
 import { histVol } from "./blackscholes";
-import { selectCSP, selectCC, selectLongPlay, settle } from "./strategy";
+import { ivVsHv } from "./analytics";
+import { selectCSP, selectCC, selectLongPlay, selectLeaps, selectPmccShort, settle } from "./strategy";
 import type { OptionsStrategyConfig } from "./strategy";
 import type { Underlying } from "./settings";
 import { newTrace, WHEEL_GATES } from "@/lib/trading/gates";
 
-const WEEK_MS = 7 * 86_400_000;
+const WEEK_MS = 14 * 86_400_000;
 
 export type OptionOutcome = {
   underlying: string;
@@ -72,6 +73,10 @@ export async function runOptionsForUser(
     convictionThreshold: settings.conviction_threshold,
     longPlayBudgetUsd: parseFloat(settings.long_play_budget_usd),
     collateralPerContractUsd: parseFloat(settings.collateral_per_contract_usd),
+    pmccLeapsDelta: settings.pmcc_leaps_delta,
+    pmccLeapsDteMin: settings.pmcc_leaps_dte_min,
+    pmccLeapsDteMax: settings.pmcc_leaps_dte_max,
+    pmccBudgetUsd: parseFloat(settings.pmcc_budget_usd),
   };
 
   // Wheel snapshot taken BEFORE settlement — used to read the cost basis of shares
@@ -101,7 +106,7 @@ export async function runOptionsForUser(
       const spotAtExpiry = priceData?.price ?? parseFloat(pos.entry_spot);
       const ccCostBasis = wheelBeforeSettle.get(pos.underlying)?.cost_basis ?? null;
       const result = settle(
-        pos.strategy as "csp" | "cc" | "long_call" | "long_put",
+        pos.strategy as "csp" | "cc" | "long_call" | "long_put" | "pmcc_leaps" | "pmcc_short",
         parseFloat(pos.strike),
         parseFloat(pos.entry_premium),
         spotAtExpiry,
@@ -156,7 +161,25 @@ export async function runOptionsForUser(
             target: [ai_options_wheel.user_id, ai_options_wheel.underlying],
             set: { state: "cash", shares: "0", cost_basis: null, updated_at: now },
           });
+      } else if (pos.strategy === "pmcc_leaps") {
+        // LEAPS expired/closed → diagonal is over, reset to pmcc_cash and clear LEAPS state.
+        await db
+          .update(ai_options_wheel)
+          .set({
+            state: "pmcc_cash",
+            leaps_strike: null,
+            leaps_expiry: null,
+            leaps_net_debit: null,
+            leaps_units: null,
+            leaps_contract_symbol: null,
+            updated_at: now,
+          })
+          .where(
+            and(eq(ai_options_wheel.user_id, userId), eq(ai_options_wheel.underlying, pos.underlying))
+          );
       }
+      // pmcc_short settles (expired_worthless / called_away) with NO state change —
+      // the LEAPS persists, next run sells another short call.
 
       outcomes.push({
         underlying: pos.underlying,
@@ -245,10 +268,135 @@ export async function runOptionsForUser(
       const fallbackVol = assetClass === "crypto" ? 0.6 : 0.25;
       const sigma = histVol(series, fallbackVol);
 
-      const state = wheel?.state ?? "cash";
+      // IVR proxy: compare 30-day HV vs 252-day HV band. Skip if IV appears cheap.
+      const IVR_MIN = 40;
+      const series252 = await getPriceHistory(symbol, 252).catch(() => null);
+      const sigma252 = histVol(series252, fallbackVol);
+      if (sigma252 > 0) {
+        const ivrProxy = ivVsHv(sigma, sigma252);
+        if (ivrProxy.proxyPctile < IVR_MIN) {
+          trace.halt("ivr", `proxy ${ivrProxy.proxyPctile.toFixed(0)}% < ${IVR_MIN}% — cheap IV, skip`);
+          await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "IV too cheap", ivr_proxy: ivrProxy.proxyPctile, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+          outcomes.push({ underlying: symbol, status: "skipped", reason: `IV proxy ${ivrProxy.proxyPctile.toFixed(0)}% < ${IVR_MIN}% — cheap IV` });
+          continue;
+        }
+        trace.pass("ivr", `proxy ${ivrProxy.proxyPctile.toFixed(0)}% ≥ ${IVR_MIN}%`);
+      } else {
+        trace.pass("ivr", "252d history unavailable — skipping filter");
+      }
 
-      // ── WHEEL ACTION ──────────────────────────────────────────────────────
-      if (state === "cash") {
+      const mode = und.mode ?? "wheel";
+      const state = wheel?.state ?? (mode === "pmcc" ? "pmcc_cash" : "cash");
+
+      // ── PMCC ACTION (diagonal) ────────────────────────────────────────────
+      if (mode === "pmcc") {
+        if (state === "pmcc_holding_leaps") {
+          // Sell a short call covered by the LEAPS.
+          const leapsStrike = parseFloat(wheel?.leaps_strike ?? "0");
+          const netDebit = parseFloat(wheel?.leaps_net_debit ?? "0");
+          const leapsUnits = parseFloat(wheel?.leaps_units ?? "0");
+          if (!leapsStrike || !leapsUnits) {
+            // Inconsistent state (LEAPS data missing) — reset to pmcc_cash, buy fresh next run.
+            trace.halt("select_contract", "LEAPS state missing — reset to pmcc_cash");
+            await db.update(ai_options_wheel).set({ state: "pmcc_cash", updated_at: now }).where(and(eq(ai_options_wheel.user_id, userId), eq(ai_options_wheel.underlying, symbol)));
+            await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "LEAPS state missing", gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+            outcomes.push({ underlying: symbol, status: "skipped", reason: "LEAPS state missing — reset" });
+          } else {
+            const short = selectPmccShort(symbol, spot, leapsStrike, netDebit, leapsUnits, sigma, cfg);
+            await db.insert(ai_options_positions).values({
+              user_id: userId,
+              underlying: symbol,
+              asset_class: assetClass,
+              strategy: "pmcc_short",
+              side: "short",
+              contract_symbol: short.contractSymbol,
+              strike: short.strike.toFixed(4),
+              expiry: short.expiry,
+              opt_type: "C",
+              contracts: 1,
+              contract_multiplier: short.multiplier.toFixed(8),
+              entry_premium: short.premium.toFixed(4),
+              entry_spot: spot.toFixed(4),
+              collateral_usd: "0",
+              greeks: short.greeks,
+              council_verdict: verdict.verdict,
+              council_confidence: verdict.confidence,
+            });
+            trace.pass("conviction", `${verdict.verdict} ${verdict.confidence}%`);
+            trace.pass("collateral", "covered by LEAPS");
+            trace.pass("select_contract", `${short.contractSymbol} Δ${short.greeks.delta.toFixed(2)} (floor ${(leapsStrike + netDebit).toFixed(2)})`);
+            trace.pass("execute", `PMCC short opened, premium $${short.premiumTotal.toFixed(2)}`);
+            await db.update(ai_options_orders).set({ action: "open_pmcc_short", detail: { symbol: short.contractSymbol, strike: short.strike, premium: short.premium, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+            outcomes.push({ underlying: symbol, status: "opened_cc", detail: { contractSymbol: short.contractSymbol, strike: short.strike, premiumTotal: short.premiumTotal } });
+          }
+        } else {
+          // pmcc_cash → buy the LEAPS (stock surrogate). Skip going long into a strong SELL.
+          if (verdict.verdict === "SELL" && verdict.confidence >= cfg.convictionThreshold) {
+            trace.halt("conviction", `SELL conf ${verdict.confidence} ≥ ${cfg.convictionThreshold} — skip LEAPS`);
+            await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "SELL signal — skip LEAPS", verdict: verdict.verdict, confidence: verdict.confidence, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+            outcomes.push({ underlying: symbol, status: "skipped", reason: `SELL signal (conf ${verdict.confidence}) — skip LEAPS` });
+          } else {
+            trace.pass("conviction", `${verdict.verdict} ${verdict.confidence}% — ok to buy LEAPS`);
+            const leaps = selectLeaps(symbol, spot, sigma, cfg);
+            if (!leaps) {
+              trace.halt("collateral", `LEAPS debit > budget $${cfg.pmccBudgetUsd.toFixed(0)}`);
+              await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "LEAPS over budget", gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+              outcomes.push({ underlying: symbol, status: "skipped", reason: "LEAPS debit over budget" });
+            } else {
+              await db.insert(ai_options_positions).values({
+                user_id: userId,
+                underlying: symbol,
+                asset_class: assetClass,
+                strategy: "pmcc_leaps",
+                side: "long",
+                contract_symbol: leaps.contractSymbol,
+                strike: leaps.strike.toFixed(4),
+                expiry: leaps.expiry,
+                opt_type: "C",
+                contracts: 1,
+                contract_multiplier: leaps.multiplier.toFixed(8),
+                entry_premium: leaps.premium.toFixed(4),
+                entry_spot: spot.toFixed(4),
+                collateral_usd: leaps.collateralUsd.toFixed(2),
+                greeks: leaps.greeks,
+                council_verdict: verdict.verdict,
+                council_confidence: verdict.confidence,
+              });
+              // Record LEAPS state so next run sells short calls against it.
+              await db
+                .insert(ai_options_wheel)
+                .values({
+                  user_id: userId,
+                  underlying: symbol,
+                  state: "pmcc_holding_leaps",
+                  leaps_strike: leaps.strike.toFixed(4),
+                  leaps_expiry: leaps.expiry,
+                  leaps_net_debit: leaps.premium.toFixed(4),
+                  leaps_units: leaps.multiplier.toFixed(8),
+                  leaps_contract_symbol: leaps.contractSymbol,
+                  updated_at: now,
+                })
+                .onConflictDoUpdate({
+                  target: [ai_options_wheel.user_id, ai_options_wheel.underlying],
+                  set: {
+                    state: "pmcc_holding_leaps",
+                    leaps_strike: leaps.strike.toFixed(4),
+                    leaps_expiry: leaps.expiry,
+                    leaps_net_debit: leaps.premium.toFixed(4),
+                    leaps_units: leaps.multiplier.toFixed(8),
+                    leaps_contract_symbol: leaps.contractSymbol,
+                    updated_at: now,
+                  },
+                });
+              trace.pass("collateral", `$${leaps.collateralUsd.toFixed(0)} debit`);
+              trace.pass("select_contract", `${leaps.contractSymbol} Δ${leaps.greeks.delta.toFixed(2)}`);
+              trace.pass("execute", `LEAPS bought, debit $${leaps.premiumTotal.toFixed(2)}`);
+              await db.update(ai_options_orders).set({ action: "open_leaps", detail: { symbol: leaps.contractSymbol, strike: leaps.strike, premium: leaps.premium, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+              outcomes.push({ underlying: symbol, status: "opened_long", detail: { contractSymbol: leaps.contractSymbol, strike: leaps.strike, premiumTotal: leaps.premiumTotal } });
+            }
+          }
+        }
+      } else if (state === "cash") {
         // Skip selling puts into a strong SELL signal (don't sell puts on declining underlyings)
         if (verdict.verdict === "SELL" && verdict.confidence >= cfg.convictionThreshold) {
           trace.halt("conviction", `SELL conf ${verdict.confidence} ≥ ${cfg.convictionThreshold} — skip CSP`);

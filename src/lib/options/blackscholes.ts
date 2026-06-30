@@ -112,9 +112,11 @@ export function strikeForDelta(
   sigma: number
 ): number {
   const target = Math.abs(targetDelta);
-  // OTM direction: calls above spot, puts below spot.
-  let lo = type === "C" ? S : S * 0.3;
-  let hi = type === "C" ? S * 3 : S;
+  // Search the full ITM↔OTM strike band so deep-ITM targets (e.g. Δ0.80 PMCC
+  // LEAPS calls) are reachable. |delta| is monotonic in K across [0.3S, 3S],
+  // so bisection still resolves OTM targets (Δ0.22/0.30) to the same strike.
+  let lo = S * 0.3;
+  let hi = S * 3;
   // deltaAt returns |delta| for a given strike (monotonic in K)
   const deltaAt = (K: number) => Math.abs(bsGreeks({ type, S, K, t, r, sigma }).delta);
   for (let i = 0; i < 60; i++) {

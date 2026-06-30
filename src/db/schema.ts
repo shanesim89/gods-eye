@@ -264,13 +264,18 @@ export const ai_options_settings = pgTable("ai_options_settings", {
   max_collateral_usd: numeric("max_collateral_usd", { precision: 18, scale: 2 }).default("200000").notNull(),
   long_play_budget_usd: numeric("long_play_budget_usd", { precision: 18, scale: 2 }).default("200").notNull(),
   long_play_enabled: boolean("long_play_enabled").default(true).notNull(),
-  target_delta: integer("target_delta").default(30).notNull(), // 0.30
-  dte_min: integer("dte_min").default(7).notNull(),
-  dte_max: integer("dte_max").default(14).notNull(),
+  target_delta: integer("target_delta").default(22).notNull(), // 0.22 — ~78% POP on CSP
+  dte_min: integer("dte_min").default(14).notNull(),
+  dte_max: integer("dte_max").default(30).notNull(),
   conviction_threshold: integer("conviction_threshold").default(75).notNull(),
   risk_free_rate: numeric("risk_free_rate", { precision: 6, scale: 4 }).default("0.0400").notNull(),
   collateral_per_contract_usd: numeric("collateral_per_contract_usd", { precision: 18, scale: 2 }).default("500").notNull(),
-  // [{ "symbol": "SPY", "class": "etf" }, { "symbol": "BTC", "class": "crypto" }]
+  // PMCC (Poor Man's Covered Call) — applies to underlyings tagged mode:"pmcc".
+  pmcc_leaps_delta: integer("pmcc_leaps_delta").default(80).notNull(), // 0.80 deep-ITM LEAPS
+  pmcc_leaps_dte_min: integer("pmcc_leaps_dte_min").default(180).notNull(),
+  pmcc_leaps_dte_max: integer("pmcc_leaps_dte_max").default(365).notNull(),
+  pmcc_budget_usd: numeric("pmcc_budget_usd", { precision: 18, scale: 2 }).default("2000").notNull(), // max debit per LEAPS
+  // [{ "symbol": "SPY", "class": "etf", "mode": "wheel" | "pmcc" }] — mode optional, defaults "wheel"
   underlyings: jsonb("underlyings")
     .default([
       { symbol: "SPY", class: "etf" },
@@ -288,9 +293,15 @@ export const ai_options_wheel = pgTable(
   {
     user_id: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
     underlying: text("underlying").notNull(),
-    state: text("state").default("cash").notNull(), // "cash" | "holding_stock"
+    state: text("state").default("cash").notNull(), // wheel: cash|holding_stock — pmcc: pmcc_cash|pmcc_holding_leaps
     shares: numeric("shares", { precision: 24, scale: 8 }).default("0").notNull(),
     cost_basis: numeric("cost_basis", { precision: 18, scale: 4 }), // per-share when holding
+    // PMCC LEAPS tracking (null on wheel underlyings).
+    leaps_strike: numeric("leaps_strike", { precision: 18, scale: 4 }),
+    leaps_expiry: timestamp("leaps_expiry"),
+    leaps_net_debit: numeric("leaps_net_debit", { precision: 18, scale: 4 }), // per-unit premium paid → short-call floor
+    leaps_units: numeric("leaps_units", { precision: 24, scale: 8 }), // LEAPS multiplier → short call covers exactly
+    leaps_contract_symbol: text("leaps_contract_symbol"),
     next_run_at: timestamp("next_run_at"),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
   },

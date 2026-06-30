@@ -5,7 +5,11 @@ import { ai_options_settings } from "@/db/schema";
 
 export type OptionsSettings = typeof ai_options_settings.$inferSelect;
 
-export type Underlying = { symbol: string; class: "equity" | "etf" | "crypto" };
+export type Underlying = {
+  symbol: string;
+  class: "equity" | "etf" | "crypto";
+  mode?: "wheel" | "pmcc"; // absent ⇒ "wheel" (cash-secured). "pmcc" runs the diagonal.
+};
 
 // Get the user's options settings, creating a safe-default row (HALTED, paper) if absent.
 export async function getOrCreateOptionsSettings(userId: string): Promise<OptionsSettings> {

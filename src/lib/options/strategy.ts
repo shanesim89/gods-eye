@@ -24,6 +24,12 @@ export type OptionsStrategyConfig = {
   convictionThreshold: number;
   longPlayBudgetUsd: number;
   collateralPerContractUsd: number; // fixed notional per contract (default 500)
+  // PMCC (Poor Man's Covered Call) — diagonal. Deep-ITM long LEAPS as stock surrogate,
+  // short OTM calls sold against it. Only read on pmcc-mode underlyings.
+  pmccLeapsDelta: number;  // e.g. 80 → 0.80 deep-ITM
+  pmccLeapsDteMin: number; // e.g. 180
+  pmccLeapsDteMax: number; // e.g. 365
+  pmccBudgetUsd: number;   // max debit paid per LEAPS buy
 };
 
 export type LegSelection = {
@@ -166,6 +172,57 @@ export function selectLongPlay(
   return leg;
 }
 
+// ── PMCC (Poor Man's Covered Call) ──────────────────────────────────────────
+// Buy a deep-ITM long-dated LEAPS call as a stock surrogate (~0.80 delta), then
+// sell short-dated OTM calls against it. Capital = LEAPS debit (≈1/9 of owning
+// 100 shares) → run far more concurrent positions on the same book.
+
+// LEAPS leg: long deep-ITM call. Sized like the wheel (multiplier =
+// collateralPerContractUsd / strike) so position sizing is comparable across
+// strategies. Returns null if the debit exceeds pmccBudgetUsd.
+export function selectLeaps(
+  underlying: string,
+  spot: number,
+  sigma: number,
+  cfg: OptionsStrategyConfig,
+  now = new Date()
+): LegSelection | null {
+  const expiry = expiryFriday(cfg.pmccLeapsDteMin, cfg.pmccLeapsDteMax, now);
+  const t = yearsTo(expiry, now);
+  const rawK = strikeForDelta(cfg.pmccLeapsDelta / 100, "C", spot, t, cfg.riskFreeRate, sigma);
+  // Deep ITM ⇒ strike below spot. Clamp just under spot if the solver nudges past it.
+  let strike = roundStrike(Math.min(rawK, spot));
+  if (strike >= spot) strike = roundStrike(spot * 0.99);
+  const multiplier = cfg.collateralPerContractUsd / strike;
+  // Debit paid is the capital at risk for the long leg.
+  const leg = buildLeg(underlying, "C", strike, expiry, spot, sigma, cfg.riskFreeRate, 0, multiplier, now);
+  if (leg.premiumTotal <= 0 || leg.premiumTotal > cfg.pmccBudgetUsd) return null;
+  // Record the debit as collateral so the position carries its capital footprint.
+  return { ...leg, collateralUsd: leg.premiumTotal };
+}
+
+// Short leg of the diagonal: short OTM call covered by the LEAPS (not shares).
+// Floor invariant (the PMCC safety rule): shortStrike ≥ leapsStrike + netDebit,
+// so even if the short is assigned the diagonal cannot lock a structural loss.
+// `leapsUnits` = the LEAPS multiplier → cover exactly, never over/under-write.
+export function selectPmccShort(
+  underlying: string,
+  spot: number,
+  leapsStrike: number,
+  netDebit: number, // per-unit LEAPS premium paid
+  leapsUnits: number,
+  sigma: number,
+  cfg: OptionsStrategyConfig,
+  now = new Date()
+): LegSelection {
+  const expiry = expiryFriday(cfg.dteMin, cfg.dteMax, now);
+  const t = yearsTo(expiry, now);
+  const rawK = strikeForDelta(cfg.targetDelta / 100, "C", spot, t, cfg.riskFreeRate, sigma);
+  const floor = Math.max(rawK, leapsStrike + netDebit, spot);
+  const strike = roundStrike(floor);
+  return buildLeg(underlying, "C", strike, expiry, spot, sigma, cfg.riskFreeRate, 0, leapsUnits, now);
+}
+
 export type SettleResult = {
   status: "expired_worthless" | "assigned" | "called_away" | "closed";
   realizedPnl: number;
@@ -182,7 +239,7 @@ export type SettleResult = {
 //   • On call-away, realized P&L also includes the capital gain (strike − basis)
 //     on the shares sold, which the old code dropped entirely.
 export function settle(
-  strategy: "csp" | "cc" | "long_call" | "long_put",
+  strategy: "csp" | "cc" | "long_call" | "long_put" | "pmcc_leaps" | "pmcc_short",
   strike: number,
   entryPremium: number,
   spotAtExpiry: number,
@@ -192,6 +249,16 @@ export function settle(
 ): SettleResult {
   const mult = contractMultiplier * contracts;
   const credit = entryPremium * mult;
+
+  // PMCC short call: covered by the LEAPS, no shares change hands. ITM short books
+  // a capped loss (premium kept, minus intrinsic); the LEAPS gain offsets at its own
+  // settlement. The wheel state stays holding-leaps either way (engine no-ops here).
+  if (strategy === "pmcc_short") {
+    if (spotAtExpiry > strike) {
+      return { status: "called_away", realizedPnl: credit - (spotAtExpiry - strike) * mult };
+    }
+    return { status: "expired_worthless", realizedPnl: credit };
+  }
 
   if (strategy === "csp") {
     if (spotAtExpiry < strike) {
@@ -214,10 +281,10 @@ export function settle(
     return { status: "expired_worthless", realizedPnl: credit };
   }
 
-  // long options: intrinsic at expiry − premium paid
-  const intrinsic =
-    strategy === "long_call"
-      ? Math.max(0, spotAtExpiry - strike)
-      : Math.max(0, strike - spotAtExpiry);
+  // long options (incl. PMCC LEAPS, a long call): intrinsic at expiry − premium paid
+  const isCall = strategy === "long_call" || strategy === "pmcc_leaps";
+  const intrinsic = isCall
+    ? Math.max(0, spotAtExpiry - strike)
+    : Math.max(0, strike - spotAtExpiry);
   return { status: "closed", realizedPnl: intrinsic * mult - credit };
 }

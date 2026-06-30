@@ -427,16 +427,24 @@ def block_options(cur) -> str:
         )
         lines.append(f" params: delta={td}, DTE={dte}, conviction≥{ct}")
 
+        # strategy → short display label (csp wheel + pmcc diagonal + long plays)
+        def _strat_label(strat: str) -> str:
+            return {
+                "csp": "CSP", "cc": "CC",
+                "pmcc_leaps": "LEAPS", "pmcc_short": "PMCC-Call",
+                "long_call": "LONG-C", "long_put": "LONG-P",
+            }.get(strat, strat.upper())
+
         # open positions
         if open_rows:
             now = datetime.now(timezone.utc)
             lines.append(" open positions:")
             for r in open_rows:
-                _, _, underlying, strike, expiry, _, prem, mult, verdict, conf, contracts, collateral, opened_at = r
+                strat, _, underlying, strike, expiry, _, prem, mult, verdict, conf, contracts, collateral, opened_at = r
                 dte_left = (expiry - now).days if expiry else "?"
                 prem_total = float(prem) * float(mult) * int(contracts)
                 lines.append(
-                    f"  · {underlying} CSP ${float(strike):,.0f} exp {expiry.strftime('%d %b') if expiry else '?'}"
+                    f"  · {underlying} {_strat_label(strat)} ${float(strike):,.0f} exp {expiry.strftime('%d %b') if expiry else '?'}"
                     f" ({dte_left}d) · prem {prem_total:.2f} · col {_usd(float(collateral))}"
                     f" · council {verdict}/{conf}"
                 )
@@ -451,11 +459,11 @@ def block_options(cur) -> str:
             for r in recent_24h:
                 strat, status, underlying, strike, expiry, pnl, *_ = r
                 pnl_str = f" PnL {pnl:+.2f}" if pnl is not None else ""
-                lines.append(f"  · {underlying} {strat.upper()} {status}{pnl_str}")
+                lines.append(f"  · {underlying} {_strat_label(strat)} {status}{pnl_str}")
         else:
             lines.append(" 24h: no new positions")
 
-        lines.append(f" 💬 {n_settled} CSP expired worthless · conviction_threshold lowered to {ct} → more signals")
+        lines.append(f" 💬 {n_settled} settled · conviction_threshold {ct} · Wheel+PMCC active")
 
     except Exception as e:
         lines.append(f" ⚠️ error: {str(e)[:100]}")
