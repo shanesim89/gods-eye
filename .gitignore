@@ -50,3 +50,6 @@ next-env.d.ts
 
 # clerk configuration (can include secrets)
 /.clerk/
+
+# quant-scrap: standalone git repo (Python bots, separate lifecycle)
+/quant-scrap/
