@@ -14,6 +14,7 @@ import {
 import { getYahooData, getYahooSummary, type EpsQuarter } from "@/lib/yahoo";
 import { getEdgarData } from "@/lib/edgar";
 import { AnalystCard } from "../../_components/AnalystCard";
+import { ValuationPanel } from "@/components/guru/ValuationPanel";
 import { PriceChart } from "./PriceChart";
 import { TickerSearch } from "../../_components/TickerSearch";
 
@@ -87,7 +88,7 @@ export default async function StockPage({
     profileRes.status === "rejected" &&
     quoteRes.status   === "rejected" &&
     yahooRes.status   === "rejected";
-  const anyDataPresent = !!(profile || quote?.c || yahoo?.price);
+  const anyDataPresent = !!(profile?.name || quote?.c || yahoo?.price);
 
   // Price: Finnhub quote first, Yahoo fallback (Finnhub free tier is rate-limited).
   const price     = quote?.c || yahoo?.price || 0;
@@ -133,7 +134,7 @@ export default async function StockPage({
     ["52W HIGH",    n(wk52High, 2, cur)],
     ["52W LOW",     n(wk52Low, 2, cur)],
     ["MKT CAP",     fmtCap(profile?.marketCapitalization ?? (summary?.sharesOutstanding && price ? summary.sharesOutstanding * price / 1e9 * 1e3 : null), cur)],
-    ["VOLUME",      summary?.sharesOutstanding ? "—" : "—"],
+    ["VOLUME",      yahoo?.volume != null ? Intl.NumberFormat("en", { notation: "compact" }).format(yahoo.volume) : "—"],
     ["BETA",        n(fin?.beta ?? summary?.beta, 2)],
   ];
 
@@ -404,6 +405,9 @@ export default async function StockPage({
           </table>
         </div>
       )}
+
+      {/* Valuation model — DCF + comps + sensitivity */}
+      <ValuationPanel edgar={edgar} summary={summary} price={price} currencySymbol={cur} />
 
       {/* Analyst consensus */}
       <AnalystCard summary={summary} price={price} currency={ccy} currencySymbol={cur} />

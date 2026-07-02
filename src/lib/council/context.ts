@@ -6,8 +6,8 @@ import {
   getCompanyNews,
 } from "@/lib/finnhub";
 import { getYahooData, getYahooSummary, type YahooSummary } from "@/lib/yahoo";
-import { getKronosForecast, candlesToOHLCV } from "@/lib/kronos";
 import { getEdgarData } from "@/lib/edgar";
+import { loadOptionsAnalysis } from "@/lib/options/load";
 import type { AssetClass, CouncilContext } from "./types";
 
 function buildAnalystBlock(
@@ -147,21 +147,6 @@ export async function buildContext(
     const lcData  = lc.status         === "fulfilled" ? lc.value         : null;
     const edgar   = edgarRes.status   === "fulfilled" ? edgarRes.value   : null;
 
-    // Kronos: needs candles first, then fires (null-safe on failure/timeout)
-    const kronosCtxCandles =
-      candles?.s === "ok" && candles.t?.length
-        ? {
-            dates: candles.t.map((ts) => new Date(ts * 1000).toISOString().slice(0, 10)),
-            closes: candles.c,
-            volumes: candles.v,
-          }
-        : null;
-    const kronosData = await getKronosForecast({
-      ohlcv: candlesToOHLCV(kronosCtxCandles),
-      predLen: 5,   // 1 trading week
-      samples: 8,
-    });
-
     // Finnhub free tier no longer serves basic-financials; backfill 52w from Yahoo
     // so the synthesizer's computeRefs has real anchors.
     const fin: Record<string, number | undefined> | null =
@@ -207,7 +192,6 @@ export async function buildContext(
       analyst: buildAnalystBlock(summary, quote?.c || yahoo?.price || 0),
       nextEarningsDate: summary?.nextEarningsDate ?? null,
       lunarcrush: lcData,
-      kronos: kronosData,
       edgar,
     };
   }
@@ -265,19 +249,6 @@ export async function buildContext(
     const lcData = lcRes.status  === "fulfilled" ? lcRes.value  : null;
     const md = coin?.market_data;
 
-    const cryptoKronosCandles = chart?.prices?.length
-      ? {
-          dates: chart.prices.map(([ts]) => new Date(ts).toISOString().slice(0, 10)),
-          closes: chart.prices.map(([, p]) => p),
-          volumes: chart.total_volumes?.map(([, v]) => v) ?? [],
-        }
-      : null;
-    const kronosCryptoData = await getKronosForecast({
-      ohlcv: candlesToOHLCV(cryptoKronosCandles),
-      predLen: 7,   // 1 week of daily bars
-      samples: 8,
-    });
-
     const cryptoCandles =
       chart?.prices?.length
         ? {
@@ -310,7 +281,6 @@ export async function buildContext(
           }
         : null,
       lunarcrush: lcData,
-      kronos: kronosCryptoData,
     };
   }
 
@@ -325,12 +295,13 @@ export async function buildContext(
     const expiry = `20${raw.slice(0, 2)}-${raw.slice(2, 4)}-${raw.slice(4, 6)}`;
     const optionType = match[3] === "C" ? "CALL" : "PUT";
     const strike = `$${match[4]}`;
-    const [quoteRes, finRes, yahooRes, summaryRes, lcRes] = await Promise.allSettled([
+    const [quoteRes, finRes, yahooRes, summaryRes, lcRes, chainRes] = await Promise.allSettled([
       getQuote(underlying),
       getBasicFinancials(underlying),
       getYahooData(underlying, 90),
       getYahooSummary(underlying),
       fetchLunarCrush("stocks", underlying),
+      loadOptionsAnalysis(symbol),
     ]);
     const quote   = quoteRes.status   === "fulfilled" ? quoteRes.value   : null;
     const finRaw  = finRes.status     === "fulfilled" ? finRes.value     : null;
@@ -338,6 +309,7 @@ export async function buildContext(
     const summary = summaryRes.status === "fulfilled" ? summaryRes.value : null;
     const candles = yahoo?.candles ?? null;
     const lcData  = lcRes.status      === "fulfilled" ? lcRes.value      : null;
+    const chainResult = chainRes.status === "fulfilled" ? chainRes.value : null;
     const underlyingPrice = quote?.c || yahoo?.price || 0;
     const fin: Record<string, number | undefined> | null =
       finRaw || yahoo?.week52High != null || yahoo?.week52Low != null
@@ -347,7 +319,31 @@ export async function buildContext(
             "52WeekLow":  finRaw?.["52WeekLow"]  ?? yahoo?.week52Low  ?? undefined,
           }
         : null;
-    optionsMeta = { underlying, optionType, strike, expiry, underlyingPrice };
+
+    // Extract chain analytics for FLOW + RISK agents.
+    let chainAnalytics: Omit<NonNullable<CouncilContext["optionsMeta"]>, "underlying" | "optionType" | "strike" | "expiry" | "underlyingPrice"> = {};
+    if (chainResult?.ok) {
+      const a = chainResult.analysis;
+      const cs = a.chainStats;
+      // Top-3 call/put walls by OI.
+      const oiRows = [...a.charts.oi].sort((x, y) => y.callOI - x.callOI);
+      const callWalls = oiRows.slice(0, 3).map((r) => r.strike);
+      const putWalls = [...a.charts.oi].sort((x, y) => y.putOI - x.putOI).slice(0, 3).map((r) => r.strike);
+      chainAnalytics = {
+        atmIV: cs.atmIV,
+        hv: a.hv,
+        ivHvRatio: cs.ivVsHv.ratio,
+        ivFlag: cs.ivVsHv.flag as "rich" | "cheap" | "fair",
+        putCallOI: cs.putCall.oi,
+        maxPain: cs.maxPain,
+        expectedMovePct: cs.expectedMove.pct,
+        dte: a.dte,
+        callWalls,
+        putWalls,
+      };
+    }
+
+    optionsMeta = { underlying, optionType, strike, expiry, underlyingPrice, ...chainAnalytics };
     return {
       ticker: symbol,
       assetClass,

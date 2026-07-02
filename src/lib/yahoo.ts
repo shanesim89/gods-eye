@@ -3,9 +3,11 @@ import { db } from "@/db/client";
 import { market_data_cache } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import type { StockCandles } from "./finnhub";
+import type { NormalizedChain, OptRow } from "./options/symbol";
 
 const CHART_BASE = "https://query1.finance.yahoo.com/v8/finance/chart";
 const SUMMARY_BASE = "https://query1.finance.yahoo.com/v10/finance/quoteSummary";
+const OPTIONS_BASE = "https://query1.finance.yahoo.com/v7/finance/options";
 const SUMMARY_MODULES = "summaryDetail,defaultKeyStatistics,financialData,assetProfile,recommendationTrend,calendarEvents,earnings";
 
 export type YahooData = {
@@ -470,6 +472,109 @@ async function fetchYahooSummary(symbol: string): Promise<YahooSummary | null> {
 /** Keyless Yahoo quoteSummary snapshot. Cached 6h. */
 export async function getYahooSummary(symbol: string): Promise<YahooSummary | null> {
   return cached(`yh:${symbol}:summary`, TTL_6HR, () => fetchYahooSummary(symbol));
+}
+
+// ── Options chain (v7/finance/options) ──────────────────────────────────────
+// Yahoo gives real IV / OI / volume / bid-ask but NOT greeks — the caller
+// computes greeks via Black-Scholes from impliedVolatility. The v7 endpoint
+// needs the same cookie+crumb session as quoteSummary, so we reuse it with the
+// identical 401/403 → refresh → retry dance.
+
+type YahooOptContract = {
+  strike?: number;
+  lastPrice?: number;
+  bid?: number;
+  ask?: number;
+  volume?: number;
+  openInterest?: number;
+  impliedVolatility?: number;
+  inTheMoney?: boolean;
+};
+
+type YahooOptionsResponse = {
+  optionChain?: {
+    result?: Array<{
+      underlyingSymbol?: string;
+      expirationDates?: number[];
+      strikes?: number[];
+      quote?: { regularMarketPrice?: number };
+      options?: Array<{
+        expirationDate?: number;
+        calls?: YahooOptContract[];
+        puts?: YahooOptContract[];
+      }>;
+    }>;
+  };
+};
+
+function toOptRow(c: YahooOptContract): OptRow {
+  return {
+    strike: c.strike ?? 0,
+    lastPrice: c.lastPrice ?? 0,
+    bid: c.bid ?? 0,
+    ask: c.ask ?? 0,
+    volume: c.volume ?? 0,
+    openInterest: c.openInterest ?? 0,
+    impliedVolatility: c.impliedVolatility ?? 0,
+    inTheMoney: c.inTheMoney ?? false,
+    greeks: null, // Yahoo has none → BS-computed downstream
+  };
+}
+
+/**
+ * Real options chain for an equity/ETF, normalized to NormalizedChain.
+ * Pass expirationUnix (seconds) to select a specific expiry; otherwise Yahoo
+ * returns its default (nearest) expiry plus the full list of expirationDates.
+ */
+export async function getYahooOptions(
+  symbol: string,
+  expirationUnix?: number
+): Promise<NormalizedChain | null> {
+  try {
+    let sess = await getYahooSession();
+    if (!sess) return null;
+    const url = (s: { crumb: string }): string =>
+      `${OPTIONS_BASE}/${encodeURIComponent(symbol)}?crumb=${encodeURIComponent(s.crumb)}` +
+      (expirationUnix ? `&date=${expirationUnix}` : "");
+    const callOnce = (s: { cookie: string; crumb: string }): Promise<Response> =>
+      fetch(url(s), { cache: "no-store", headers: { "User-Agent": "Mozilla/5.0", Cookie: s.cookie } });
+
+    let r = await callOnce(sess);
+    if (r.status === 401 || r.status === 403) {
+      const fresh = await refreshYahooSession();
+      if (!fresh) return null;
+      sess = fresh;
+      r = await callOnce(fresh);
+    }
+    if (!r.ok) return null;
+
+    const j = (await r.json()) as YahooOptionsResponse;
+    const res = j.optionChain?.result?.[0];
+    if (!res) return null;
+    const block = res.options?.[0];
+    if (!block) return null;
+
+    const underlyingPrice = res.quote?.regularMarketPrice ?? 0;
+    const calls = (block.calls ?? []).map(toOptRow).sort((a, b) => a.strike - b.strike);
+    const puts = (block.puts ?? []).map(toOptRow).sort((a, b) => a.strike - b.strike);
+    const strikes =
+      res.strikes && res.strikes.length
+        ? [...res.strikes].sort((a, b) => a - b)
+        : Array.from(new Set([...calls, ...puts].map((o) => o.strike))).sort((a, b) => a - b);
+
+    return {
+      source: "yahoo",
+      underlying: res.underlyingSymbol ?? symbol.toUpperCase(),
+      underlyingPrice,
+      expiry: block.expirationDate ?? expirationUnix ?? 0,
+      expirations: res.expirationDates ?? [],
+      strikes,
+      calls,
+      puts,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

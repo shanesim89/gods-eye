@@ -4,7 +4,9 @@ import { CouncilCard } from "@/components/council/CouncilCard";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/db/client";
 import { assets } from "@/db/schema";
+import { getScoreHistory } from "@/lib/crypto/scanner";
 import { CryptoChart } from "./CryptoChart";
+import { ScoreHistoryChart } from "./ScoreHistoryChart";
 import { TickerSearch } from "../../_components/TickerSearch";
 
 export const dynamic = "force-dynamic";
@@ -65,7 +67,7 @@ type CoinDetail = {
   symbol: string;
   name: string;
   description: { en: string };
-  links: { homepage: string[]; blockchain_site: string[] };
+  links: { homepage: string[]; blockchain_site: string[]; twitter_screen_name?: string; subreddit_url?: string };
   image: { thumb: string; small: string };
   market_cap_rank: number;
   market_data: {
@@ -81,6 +83,8 @@ type CoinDetail = {
     ath_change_percentage: Record<string, number>;
     ath_date: Record<string, string>;
     atl: Record<string, number>;
+    atl_change_percentage: Record<string, number>;
+    atl_date: Record<string, string>;
     circulating_supply: number;
     total_supply: number;
     max_supply: number;
@@ -129,7 +133,7 @@ export default async function CryptoPage({
     }
   }
 
-  const [coinRes, chartRes] = await Promise.allSettled([
+  const [coinRes, chartRes, scoreHistory] = await Promise.allSettled([
     cgId
       ? cgGet<CoinDetail>(
           `/coins/${cgId}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false`
@@ -140,10 +144,12 @@ export default async function CryptoPage({
           `/coins/${cgId}/market_chart?vs_currency=usd&days=90&interval=daily`
         )
       : Promise.resolve(null),
+    getScoreHistory(symbol, 30),
   ]);
 
   const coin  = coinRes.status  === "fulfilled" ? coinRes.value  : null;
   const chart = chartRes.status === "fulfilled" ? chartRes.value : null;
+  const scores = scoreHistory.status === "fulfilled" ? scoreHistory.value : [];
 
   const md = coin?.market_data;
   const price     = md?.current_price?.usd ?? 0;
@@ -174,8 +180,10 @@ export default async function CryptoPage({
     ["MARKET CAP",   fmtBig(md?.market_cap?.usd)],
     ["VOLUME 24H",   fmtBig(md?.total_volume?.usd)],
     ["MKT CAP RANK", coin?.market_cap_rank ? `#${coin.market_cap_rank}` : "—"],
-    ["ATH",          `$${fmt(md?.ath?.usd)}`],
+    ["ATH",          md?.ath?.usd != null ? `$${fmt(md.ath.usd, md.ath.usd >= 1 ? 2 : 6)}` : "—"],
     ["ATH CHANGE",   md?.ath_change_percentage?.usd != null ? `${fmt(md.ath_change_percentage.usd, 1)}%` : "—"],
+    ["ATL",          md?.atl?.usd != null ? `$${fmt(md.atl.usd, md.atl.usd >= 1 ? 2 : 6)}` : "—"],
+    ["ATL CHANGE",   md?.atl_change_percentage?.usd != null ? `${fmt(md.atl_change_percentage.usd, 1)}%` : "—"],
     ["CIRCULATING",  md?.circulating_supply != null ? Intl.NumberFormat("en", { notation: "compact" }).format(md.circulating_supply) : "—"],
     ["MAX SUPPLY",   md?.max_supply != null ? Intl.NumberFormat("en", { notation: "compact" }).format(md.max_supply) : "∞"],
   ];
@@ -207,16 +215,26 @@ export default async function CryptoPage({
           {cgAmbiguousNote && (
             <div className="text-amber text-[10px] mt-1 italic">⚠ {cgAmbiguousNote}</div>
           )}
-          {coin?.links?.homepage?.[0] && (
-            <a
-              href={coin.links.homepage[0]}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-cyan hover:text-amber transition-colors text-[10px] mt-2 block"
-            >
-              {coin.links.homepage[0].replace(/^https?:\/\//, "").replace(/\/$/, "")}
-            </a>
-          )}
+          <div className="flex flex-wrap gap-3 mt-2">
+            {coin?.links?.homepage?.[0] && (
+              <a href={coin.links.homepage[0]} target="_blank" rel="noopener noreferrer"
+                className="text-cyan hover:text-amber transition-colors text-[10px]">
+                🌐 {coin.links.homepage[0].replace(/^https?:\/\//, "").replace(/\/$/, "")}
+              </a>
+            )}
+            {coin?.links?.twitter_screen_name && (
+              <a href={`https://twitter.com/${coin.links.twitter_screen_name}`} target="_blank" rel="noopener noreferrer"
+                className="text-cyan hover:text-amber transition-colors text-[10px]">
+                𝕏 @{coin.links.twitter_screen_name}
+              </a>
+            )}
+            {coin?.links?.subreddit_url && (
+              <a href={coin.links.subreddit_url} target="_blank" rel="noopener noreferrer"
+                className="text-cyan hover:text-amber transition-colors text-[10px]">
+                ⬆ Reddit
+              </a>
+            )}
+          </div>
         </div>
         <TickerSearch assetClass="crypto" currentTicker={symbol} />
       </div>
@@ -241,6 +259,9 @@ export default async function CryptoPage({
           </table>
         </div>
       </div>
+
+      {/* Scanner score history */}
+      <ScoreHistoryChart data={scores} symbol={symbol} />
 
       {/* Description */}
       {coin?.description?.en && (

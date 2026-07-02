@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Panel } from "@/components/ui/Panel";
 import { TickerSearch } from "./_components/TickerSearch";
 import { SpxHeatmap } from "./_components/SpxHeatmap";
@@ -34,9 +35,9 @@ const CLASSES = [
   {
     slug: "options",
     label: "OPTIONS",
-    sub: "Contract analysis — coming soon",
+    sub: "Contract analysis — chain · greeks · IV · flow",
     example: "SPY-250620C500",
-    color: "text-muted",
+    color: "text-purple",
   },
 ];
 
@@ -83,6 +84,27 @@ export default async function GuruPage() {
           </div>
         ))}
       </div>
+
+      {/* ── Trend Spotting ── */}
+      <Link
+        href="/guru/screen"
+        className="block border border-cyan/40 bg-cyan/5 p-4 mt-3 hover:border-cyan transition-colors group"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <div className="text-[11px] tracking-[1.5px] font-bold text-cyan hud-text-glow">
+              ◢ TREND SPOTTING
+            </div>
+            <div className="text-dim text-[10px] mt-0.5">
+              Describe a theme in plain English → ranked matches across the live
+              crypto + stock universe
+            </div>
+          </div>
+          <span className="text-cyan text-[16px] group-hover:translate-x-0.5 transition-transform">
+            ▸
+          </span>
+        </div>
+      </Link>
 
       {/* ── Fear & Greed ── */}
       <div className="border border-border bg-grid p-4 mt-3">
@@ -132,12 +154,9 @@ export default async function GuruPage() {
         </div>
       </div>
 
-      {/* ── Council teaser ── */}
+      {/* ── Council note ── */}
       <div className="border border-border/40 bg-grid p-3 mt-3 text-[10px] text-dim">
-        <span className="text-muted">◎ COUNCIL</span> — Phase 3 will add a 4-agent investment
-        council (Technical · Fundamental · Sentiment · Macro) that debates each ticker
-        and returns a synthesized BUY / HOLD / SELL verdict with confidence score.
-        Debate log is collapsible.
+        <span className="text-muted">◎ COUNCIL</span> — 4-agent investment council (Technical · Fundamental · Sentiment · Macro) available on every ticker page. Tap any heatmap tile or search above to open a deep-dive with live BUY / HOLD / SELL verdict and collapsible debate log.
       </div>
     </Panel>
   );

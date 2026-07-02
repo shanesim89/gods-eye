@@ -5,10 +5,11 @@ import { useEffect, useState } from "react";
 import { UserButton, useAuth } from "@clerk/nextjs";
 
 const NAV = [
-  { href: "/money-map", label: "🏠 HOME", match: (p: string) => p === "/money-map" },
+  { href: "/", label: "🏠 HOME", match: (p: string) => p === "/" },
   { href: "/money-map/assets", label: "MONEY MAP", match: (p: string) => p.startsWith("/money-map") && p !== "/money-map" },
   { href: "/guru", label: "GURU", match: (p: string) => p.startsWith("/guru") },
   { href: "/ai-portfolio", label: "AI PORTFOLIO", match: (p: string) => p.startsWith("/ai-portfolio") },
+  { href: "/scanner", label: "SCANNER", match: (p: string) => p.startsWith("/scanner") },
   { href: "/goals", label: "GOALS", match: (p: string) => p.startsWith("/goals") },
   { href: "/settings", label: "SETTINGS", match: (p: string) => p.startsWith("/settings") },
 ];
@@ -54,8 +55,8 @@ export function Topbar() {
     <>
       <div className="bg-black amber-border-b px-3 py-1.5 flex flex-wrap justify-between items-center gap-y-1 text-[11px]">
         <Link
-          href="/money-map"
-          className="text-amber font-bold tracking-[2px] shrink-0 hover:opacity-80"
+          href="/"
+          className="text-cyan font-bold tracking-[2px] shrink-0 hover:opacity-80 hud-text-glow"
           title="Home"
         >
           ◉ GOD&apos;S EYE / TERMINAL
@@ -68,7 +69,7 @@ export function Topbar() {
                 key={n.label}
                 href={n.href}
                 className={`mx-2.5 shrink-0 ${
-                  active ? "text-amber" : "text-muted hover:text-text"
+                  active ? "text-cyan" : "text-muted hover:text-text"
                 }`}
               >
                 {n.label}
@@ -81,7 +82,7 @@ export function Topbar() {
           {isLoaded && isSignedIn ? (
             <UserButton />
           ) : isLoaded ? (
-            <Link href="/sign-in" className="text-amber">
+            <Link href="/sign-in" className="text-cyan">
               SIGN IN
             </Link>
           ) : null}

@@ -1,7 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  async redirects() {
+    return [
+      { source: "/guru/crypto/scanner", destination: "/scanner", permanent: false },
+    ];
+  },
 };
 
 export default nextConfig;

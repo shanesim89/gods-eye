@@ -98,6 +98,17 @@ export type CouncilContext = {
     strike: string;
     expiry: string;
     underlyingPrice: number;
+    // Chain analytics (populated when loadOptionsAnalysis succeeds)
+    atmIV?: number;           // e.g. 0.21 = 21%
+    hv?: number;              // 30-day realized vol
+    ivHvRatio?: number;       // >1 = IV rich vs HV
+    ivFlag?: "rich" | "cheap" | "fair";
+    putCallOI?: number;       // put/call OI ratio; >1 = put-heavy
+    maxPain?: number;         // strike where market makers are least exposed
+    expectedMovePct?: number; // 1σ implied move as % of spot
+    dte?: number;             // days to expiry
+    callWalls?: number[];     // top-3 call OI strikes
+    putWalls?: number[];      // top-3 put OI strikes
   } | null;
   // Analyst consensus (stocks/etf via Yahoo quoteSummary)
   analyst?: {
@@ -121,8 +132,6 @@ export type CouncilContext = {
     socialVolume: number | null;
     sentiment: number | null; // 0–100
   } | null;
-  // Kronos foundation-model forecast (stocks/etf/crypto only, null if unavailable)
-  kronos?: import("@/lib/kronos").KronosForecast | null;
   // SEC EDGAR annual financials (US stocks/etf only, null if unavailable)
   edgar?: import("@/lib/edgar").EdgarData | null;
 };

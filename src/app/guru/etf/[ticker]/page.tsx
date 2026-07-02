@@ -77,18 +77,23 @@ export default async function EtfPage({
         }))
       : [];
 
+  const volume = yahoo?.volume;
+  const pct52wHigh = wk52High && price ? (((price - wk52High) / wk52High) * 100) : null;
+  const pct52wLow  = wk52Low  && price ? (((price - wk52Low)  / wk52Low)  * 100) : null;
+
   const metrics: [string, string][] = [
     ["PREV CLOSE",  n(prevClose, 2, cur)],
     ["OPEN",        n(open, 2, cur)],
     ["DAY HIGH",    n(dayHigh, 2, cur)],
     ["DAY LOW",     n(dayLow, 2, cur)],
-    ["52W HIGH",    n(wk52High, 2, cur)],
-    ["52W LOW",     n(wk52Low, 2, cur)],
-    ["MKT CAP",     fmtCap(profile?.marketCapitalization, cur)],
-    ["P/E",         n(fin?.peNormalizedAnnual, 1)],
-    ["EPS",         n(fin?.epsTTM, 2, cur)],
-    ["BETA",        n(fin?.beta, 2)],
-    ["DIV YIELD",   fin?.dividendYieldIndicatedAnnual ? `${n(fin.dividendYieldIndicatedAnnual, 2)}%` : "—"],
+    ["52W HIGH",    wk52High ? `${n(wk52High, 2, cur)}${pct52wHigh != null ? `  (${pct52wHigh >= 0 ? "+" : ""}${pct52wHigh.toFixed(1)}%)` : ""}` : "—"],
+    ["52W LOW",     wk52Low  ? `${n(wk52Low,  2, cur)}${pct52wLow  != null ? `  (+${pct52wLow.toFixed(1)}%)` : ""}` : "—"],
+    ["AUM",         fmtCap(profile?.marketCapitalization, cur)],
+    ["VOLUME",      volume != null ? Intl.NumberFormat("en", { notation: "compact" }).format(volume) : "—"],
+    ["BETA",        n(fin?.beta ?? summary?.beta, 2)],
+    ["DIV YIELD",   fin?.dividendYieldIndicatedAnnual ? `${n(fin.dividendYieldIndicatedAnnual, 2)}%` : summary?.dividendYield ? `${n(summary.dividendYield, 2)}%` : "—"],
+    ["DIV RATE",    summary?.dividendRate ? n(summary.dividendRate, 2, cur) : "—"],
+    ["52W RETURN",  fin?.["52WeekPriceReturnDaily"] != null ? `${n(fin["52WeekPriceReturnDaily"], 1)}%` : "—"],
   ];
 
   const valid = price > 0;

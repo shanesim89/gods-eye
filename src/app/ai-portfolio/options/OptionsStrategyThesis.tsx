@@ -34,16 +34,28 @@ function fmtDate(d: Date | null | undefined): string {
 
 // The decision pipeline the options engine runs each weekly tick. Mirrors runOptionsForUser().
 const GATES: { n: string; label: string; detail: string }[] = [
-  { n: "01", label: "KILL SWITCH", detail: "If disarmed, the engine halts before touching any underlying." },
-  { n: "02", label: "SETTLE EXPIRY", detail: "First, settle expired contracts. Put assigned → buy 100 shares (state → HOLDING). Call exercised → shares sold (state → CASH). Otherwise the option expires worthless and the full premium is kept." },
-  { n: "03", label: "DUE CHECK", detail: "Acts on a weekly cadence per underlying. Skips if the next run is not yet due." },
-  { n: "04", label: "PERIOD CLAIM", detail: "Atomic weekly idempotency claim — one wheel action per underlying per ISO week, even on retries." },
-  { n: "05", label: "COUNCIL VERDICT", detail: "4 AI agents + Kronos forecast vote BUY / HOLD / SELL with a confidence score on the underlying." },
-  { n: "06", label: "WHEEL ACTION", detail: "CASH → sell a cash-secured put (skipped on a strong SELL ≥ conviction). HOLDING → sell a covered call above cost basis to get called away at a profit." },
-  { n: "07", label: "COLLATERAL CAP", detail: "A new cash-secured put is skipped if total reserved collateral would exceed the account max." },
-  { n: "08", label: "LONG PLAY", detail: "Additive directional bet when conviction ≥ threshold — BUY → long call, SELL → long put. Budget-capped; max loss = premium paid." },
-  { n: "09", label: "ADVANCE +7D", detail: "Records the contract and schedules the next run one week out." },
+  { n: "01", label: "KILL SWITCH", detail: "Is the bot armed? If you switched it off, nothing happens. Full stop." },
+  { n: "02", label: "SETTLE EXPIRY", detail: "Close out anything that expired. Three outcomes: the option died worthless (keep all the cash), the put triggered (you now own the shares at your pre-agreed price), or the call triggered (your shares sold at a profit)." },
+  { n: "03", label: "DUE CHECK", detail: "Each asset gets touched once a week. Not its day yet? Skip it." },
+  { n: "04", label: "PERIOD CLAIM", detail: "Safety lock: even if the system runs twice in one week, only one trade per asset can ever go through." },
+  { n: "05", label: "COUNCIL VERDICT", detail: "4 AI analysts + price forecast vote BUY / HOLD / SELL with a confidence %. This opinion steers the next two gates." },
+  { n: "06", label: "WHEEL ACTION", detail: "Holding cash → sell a put (get paid to wait for a dip). Holding shares → sell a call (get paid while waiting to sell higher). Exception: if the council screams SELL, don't promise to buy a falling asset — skip." },
+  { n: "07", label: "COLLATERAL CAP", detail: "Every promise must be fully backed by cash. If a new trade would exceed your cash ceiling, it doesn't happen." },
+  { n: "08", label: "LONG PLAY", detail: "Council very confident? Place a small side bet in that direction (capped budget, like a lottery ticket — lose at most the small premium paid)." },
+  { n: "09", label: "ADVANCE +7D", detail: "Write everything down, set a reminder for next week. Done." },
 ];
+
+/** Plain-English status of where this underlying sits in the wheel right now. */
+function statusSentence(u: UnderlyingThesis): string {
+  const next = u.nextRun ? fmtDate(u.nextRun) : "soon";
+  if (u.wheelState === "cash") {
+    if (u.verdict === "SELL")
+      return `Sitting in cash. Council says SELL — the bot will NOT promise to buy ${u.symbol} while it looks weak. Re-checks ${next}.`;
+    return `Sitting in cash, getting paid to wait: sells a put below the current price and keeps the premium if ${u.symbol} stays up. Next move ${next}.`;
+  }
+  const basis = u.costBasis != null ? ` (cost ${usd(u.costBasis, 2)})` : "";
+  return `Holding ${Math.round(u.shares)} units of ${u.symbol}${basis}. Selling calls above cost — paid to wait for a profitable exit. Next move ${next}.`;
+}
 
 export function OptionsStrategyThesis({
   convictionThreshold,
@@ -183,6 +195,9 @@ export function OptionsStrategyThesis({
               <div style={{ display: "flex", justifyContent: "space-between", marginTop: 3, fontSize: 8, color: "#5b7d8a", fontVariantNumeric: "tabular-nums" }}>
                 <span>OPEN {u.openCount}</span>
                 <span>COLLAT {usd(u.collateralReserved)}</span>
+              </div>
+              <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${c}1f`, fontSize: 9, color: "#8fb8c4", lineHeight: 1.5 }}>
+                {statusSentence(u)}
               </div>
             </div>
           );

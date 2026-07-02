@@ -135,9 +135,13 @@ export async function runDcaForUser(
       btcPrice = 0;
     }
     if (threshold > 0 && dipAmount > 0 && btcPrice > 0 && btcPrice < threshold) {
+      // Re-arm nonce: settings.updated_at changes every time the user re-arms
+      // (sets dip_trigger_fired=false), so the same threshold can fire again.
+      // Without it the key collided with the prior fire → silent no-op re-arm.
+      const armNonce = settings.updated_at.getTime();
       for (const token of tokens) {
         const trace = newTrace().pass("kill_switch").pass("dip_trigger", `BTC ${btcPrice} < ${threshold}`);
-        const idemKey = `${userId}:${token}:dip:${threshold}`;
+        const idemKey = `${userId}:${token}:dip:${threshold}:${armNonce}`;
         try {
           const claim = await atomicCapClaim({
             userId, token, venue: venueFor(token),
@@ -185,6 +189,15 @@ export async function runDcaForUser(
         .where(eq(ai_trading_settings.user_id, userId));
       return { ran: true, reason: "dip-trigger fired", outcomes };
     }
+  }
+
+  // GUARDRAIL: dip trigger is the first-ever buy. Block cadence until it fires.
+  if (settings.dip_trigger_enabled && !settings.dip_trigger_fired) {
+    return {
+      ran: false,
+      reason: `waiting for BTC dip trigger ($${Number(settings.dip_trigger_price).toLocaleString()}) — cadence blocked until first buy fires`,
+      outcomes: [],
+    };
   }
 
   const schedRows = await db
@@ -250,6 +263,28 @@ export async function runDcaForUser(
       }
       trace.pass("price_ceiling", maxPrice !== undefined ? `price ${price} ≤ ceiling ${maxPrice}` : "no ceiling set");
 
+      // GUARDRAIL 3b-3: idempotency pre-check — skip council if this period's order
+      // already exists (any status). Prevents a prior failed/pending order row from
+      // burning the council budget slot on every subsequent run until the schedule advances.
+      const existingOrder = await db
+        .select({ id: ai_trade_orders.id })
+        .from(ai_trade_orders)
+        .where(eq(ai_trade_orders.idempotency_key, idemKey))
+        .limit(1);
+      if (existingOrder.length > 0) {
+        // Period already claimed — advance schedule so this token doesn't block others.
+        const retryAt = new Date(now.getTime() + DAY_MS);
+        await db
+          .insert(ai_token_schedule)
+          .values({ user_id: userId, token, next_run_at: retryAt, consecutive_skips: 0 })
+          .onConflictDoUpdate({
+            target: [ai_token_schedule.user_id, ai_token_schedule.token],
+            set: { next_run_at: retryAt, updated_at: now },
+          });
+        outcomes.push({ token, status: "skipped", reason: "already processed this period" });
+        continue;
+      }
+
       // GUARDRAIL 3b-2: council budget — stay under the 60s function cap. Defer
       // this token (leave schedule untouched → still due → picked up first next
       // run via fairness ordering) rather than risk a mid-loop timeout.
@@ -263,47 +298,8 @@ export async function runDcaForUser(
       councilRuns++;
       trace.pass("council", `${verdict.verdict} ${verdict.confidence}%`);
 
-      // GUARDRAIL 3c: SELL-skip gate — skip period if strong SELL and skips not maxed.
-      const sellThreshold = (settings.sell_skip_threshold as number | null) ?? 70;
-      const maxSkips = (settings.max_consecutive_skips as number | null) ?? 1;
-      const consecutiveSkips = sched?.consecutive_skips ?? 0;
-
-      if (
-        verdict.verdict === "SELL" &&
-        verdict.confidence >= sellThreshold &&
-        consecutiveSkips < maxSkips
-      ) {
-        const nextRun = new Date(due.getTime() + cadenceDays * DAY_MS);
-        trace.halt("sell_skip", `SELL conf ${verdict.confidence} ≥ ${sellThreshold} — period skipped (${consecutiveSkips + 1}/${maxSkips})`);
-        // Direct insert as skipped — no pending claim needed for SELL-skip audit rows.
-        await db
-          .insert(ai_trade_orders)
-          .values({
-            user_id: userId,
-            token,
-            venue: venueFor(token),
-            usd_amount: dca.toFixed(2),
-            status: "skipped" as unknown as string,
-            idempotency_key: `${idemKey}:sell-skip`,
-            council_verdict: verdict.verdict,
-            council_confidence: verdict.confidence,
-            error: `SELL-skip: conf ${verdict.confidence} >= ${sellThreshold}`,
-            gate_trace: trace.done(),
-          })
-          .onConflictDoNothing({ target: ai_trade_orders.idempotency_key });
-        await db
-          .insert(ai_token_schedule)
-          .values({ user_id: userId, token, next_run_at: nextRun, consecutive_skips: consecutiveSkips + 1 })
-          .onConflictDoUpdate({
-            target: [ai_token_schedule.user_id, ai_token_schedule.token],
-            set: { next_run_at: nextRun, consecutive_skips: consecutiveSkips + 1, updated_at: now },
-          });
-        await setAlert(userId, `${token} SELL-skipped (conf ${verdict.confidence}) — next run ${nextRun.toISOString().slice(0, 10)}`);
-        outcomes.push({ token, status: "skipped", reason: `SELL signal (conf ${verdict.confidence})` });
-        continue;
-      }
-
-      trace.pass("sell_skip", verdict.verdict === "SELL" ? "SELL but skips maxed or below threshold" : "no strong SELL");
+      // Sell-skip gate removed — long-term accumulation mode, always buy regardless of verdict direction.
+      trace.pass("sell_skip", "long-term hold: sell signals ignored");
 
       const bz = evaluateBuyZone(verdict, price, minConf);
       const { amount, boosted } = orderAmountUsd(bz.isBuyZone, dca, boost);
@@ -403,6 +399,18 @@ export async function runDcaForUser(
         .where(eq(ai_trade_orders.idempotency_key, idemKey));
       await setAlert(userId, `${token} FAILED — ${msg}`);
       outcomes.push({ token, status: "failed", reason: msg });
+
+      // Advance schedule on failure so this token doesn't starve others on next run.
+      // Failed tokens retry after 1 day (not the full cadence — still overdue relative
+      // to working tokens but no longer pinned at epoch-0 forever).
+      const failRetryAt = new Date(now.getTime() + DAY_MS);
+      await db
+        .insert(ai_token_schedule)
+        .values({ user_id: userId, token, next_run_at: failRetryAt, consecutive_skips: 0 })
+        .onConflictDoUpdate({
+          target: [ai_token_schedule.user_id, ai_token_schedule.token],
+          set: { next_run_at: failRetryAt, updated_at: now },
+        });
     }
   }
 

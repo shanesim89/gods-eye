@@ -12,7 +12,8 @@ function makeInfo() {
 }
 
 function makeExchange(privateKey: string) {
-  const wallet = privateKeyToAccount(privateKey as `0x${string}`);
+  const pk = privateKey.startsWith("0x") ? privateKey : `0x${privateKey}`;
+  const wallet = privateKeyToAccount(pk as `0x${string}`);
   return new ExchangeClient({ transport: makeTransport(), wallet });
 }
 

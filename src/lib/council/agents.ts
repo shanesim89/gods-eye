@@ -7,10 +7,10 @@ const HAIKU = "claude-haiku-4-5-20251001";
 
 export function getRoles(assetClass: AssetClass): string[] {
   switch (assetClass) {
-    case "stocks":  return ["TECHNICAL", "FUNDAMENTAL", "SENTIMENT", "MACRO", "FORECAST"];
-    case "etf":     return ["TECHNICAL", "FUNDAMENTAL", "SENTIMENT", "MACRO", "FORECAST"];
-    case "crypto":  return ["TECHNICAL", "ON-CHAIN", "SENTIMENT", "MACRO", "FORECAST"];
-    case "options": return ["TECHNICAL", "FLOW", "SENTIMENT", "RISK"]; // no FORECAST for options
+    case "stocks":  return ["TECHNICAL", "FUNDAMENTAL", "SENTIMENT", "MACRO"];
+    case "etf":     return ["TECHNICAL", "FUNDAMENTAL", "SENTIMENT", "MACRO"];
+    case "crypto":  return ["TECHNICAL", "ON-CHAIN", "SENTIMENT", "MACRO"];
+    case "options": return ["TECHNICAL", "FLOW", "SENTIMENT", "RISK"];
   }
 }
 
@@ -105,7 +105,23 @@ Current price: ${cur}${ctx.price.toFixed(2)} ${ctx.currency} (${ctx.changePct >=
 
   if (ctx.optionsMeta) {
     const o = ctx.optionsMeta;
-    extras.push(`Option: ${o.optionType} ${o.strike} exp ${o.expiry} on ${o.underlying} (underlying price ${cur}${o.underlyingPrice.toFixed(2)})`);
+    extras.push(`Option: ${o.optionType} ${o.strike} exp ${o.expiry} on ${o.underlying} (underlying ${cur}${o.underlyingPrice.toFixed(2)}${o.dte != null ? ` · ${o.dte}d DTE` : ""})`);
+    if (o.atmIV != null) {
+      const hv = o.hv != null ? ` | HV30=${(o.hv * 100).toFixed(1)}%` : "";
+      const ivHv = o.ivHvRatio != null ? ` | IV/HV=${o.ivHvRatio.toFixed(2)}× (${o.ivFlag ?? "?"})` : "";
+      extras.push(`IV: ATM IV=${(o.atmIV * 100).toFixed(1)}%${hv}${ivHv}`);
+    }
+    if (o.expectedMovePct != null || o.maxPain != null || o.putCallOI != null) {
+      const em = o.expectedMovePct != null ? `ExpMove=±${o.expectedMovePct.toFixed(1)}%` : "";
+      const mp = o.maxPain != null ? `MaxPain=${cur}${o.maxPain.toLocaleString("en-US")}` : "";
+      const pc = o.putCallOI != null ? `Put/Call OI=${o.putCallOI.toFixed(2)} (${o.putCallOI > 1.2 ? "put-heavy → bearish lean" : o.putCallOI < 0.8 ? "call-heavy → bullish lean" : "balanced"})` : "";
+      extras.push([em, mp, pc].filter(Boolean).join(" | "));
+    }
+    if (o.callWalls?.length || o.putWalls?.length) {
+      const cw = o.callWalls?.length ? `Call walls: ${o.callWalls.map((k) => `${cur}${k}`).join(", ")}` : "";
+      const pw = o.putWalls?.length ? `Put walls: ${o.putWalls.map((k) => `${cur}${k}`).join(", ")}` : "";
+      extras.push([cw, pw].filter(Boolean).join(" | "));
+    }
   }
 
   if (ctx.edgar?.financials?.length) {
@@ -120,29 +136,6 @@ Current price: ${cur}${ctx.price.toFixed(2)} ${ctx.currency} (${ctx.changePct >=
       .map((f) => `  ${f.year}: Rev=${fmtB(f.revenue)} | NI=${fmtB(f.netIncome)} | EPS=${f.eps != null ? `${cur}${f.eps.toFixed(2)}` : "n/a"} | OCF=${fmtB(f.operatingCashFlow)}`)
       .join("\n");
     extras.push(`SEC EDGAR Annual Financials (10-K, newest first):\n${rows}`);
-  }
-
-  if (ctx.kronos) {
-    const k = ctx.kronos;
-    const sign = k.priceDeltaPct >= 0 ? "+" : "";
-    const uncertainty = k.sampleStd > 0
-      ? `Uncertainty (sample std-dev): ${k.sampleStd.toFixed(2)}% — ${
-          k.sampleStd < 1 ? "high model conviction" :
-          k.sampleStd < 3 ? "moderate conviction" : "low conviction / noisy signal"
-        }`
-      : "";
-    const barCloses = k.bars.length
-      ? `Bar-by-bar predicted closes: [${k.bars.map((b) => b.close.toFixed(2)).join(", ")}]`
-      : "";
-    extras.push(
-      `Kronos AI forecast (next ${k.bars.length || "N"} bars):\n` +
-      `Direction: ${k.direction.toUpperCase()}\n` +
-      `Predicted price change: ${sign}${k.priceDeltaPct.toFixed(2)}%\n` +
-      (uncertainty ? `${uncertainty}\n` : "") +
-      (barCloses ? `${barCloses}\n` : "")
-    );
-  } else if (role === "FORECAST") {
-    extras.push("Kronos forecast: UNAVAILABLE (model endpoint not reachable or timed out)");
   }
 
   if (ctx.lunarcrush) {
@@ -161,9 +154,8 @@ Current price: ${cur}${ctx.price.toFixed(2)} ${ctx.currency} (${ctx.changePct >=
     SENTIMENT: "Focus on news sentiment, social media data (LunarCrush if available), analyst positioning, and narrative momentum. Is the market bullish or bearish on this name?",
     MACRO: "Focus on macro environment: interest rates, sector rotation, risk-on/off, geopolitical factors, and correlation to major indices. Does the macro backdrop support this position?",
     "ON-CHAIN": "Focus on blockchain fundamentals: network activity, token supply dynamics, circulating vs max supply, volume/market cap ratio, and on-chain adoption signals.",
-    FLOW: "Focus on options flow patterns, put/call ratios, implied volatility, open interest, and what the flow implies about institutional positioning.",
-    RISK: "Focus on risk factors: time decay (theta), IV rank, liquidity risk, max loss scenario, probability of profit, and whether the risk/reward is favorable.",
-    FORECAST: "You are the QUANTITATIVE FORECAST ANALYST. Your sole input is the Kronos foundation-model prediction above. Report: (1) direction and magnitude of the predicted move, (2) whether model conviction is high or low based on sample std-dev, (3) whether this forecast agrees or disagrees with the recent price trend. If the Kronos forecast is UNAVAILABLE, emit signal=neutral, confidence=0, thesis='Kronos model unavailable — no quantitative forecast this session.', keyPoints=['Forecast model endpoint timed out or not configured'].",
+    FLOW: "You have live options chain data above (IV, put/call OI ratio, max pain, call/put walls, expected move). Interpret institutional positioning: is the put/call ratio signaling hedging or speculation? Are call/put walls acting as resistance/support? Does max pain suggest a pin level by expiry? Is IV elevated vs HV (expensive) or depressed (cheap)? What does the flow imply about smart-money directional bets?",
+    RISK: "You have live options chain data above (ATM IV, IV/HV ratio, DTE, expected move). Quantify the risk/reward: is IV rich or cheap vs realized vol? How much theta decay is priced per day? Does the expected move justify the premium? Factor in DTE — near-expiry options need larger moves to profit. Assess whether the probability of profit supports taking the position.",
   };
 
   const instruction = roleInstructions[role] ?? `Focus on your area of expertise: ${role}.`;
@@ -212,28 +204,33 @@ const RECORD_THESIS_TOOL: Anthropic.Tool = {
 
 // ─── Peer-review (Stage 2) ───────────────────────────────────────────────────
 
-const SUBMIT_PEER_RANKING_TOOL: Anthropic.Tool = {
-  name: "submit_peer_ranking",
-  description: "Submit your anonymous ranking of all 5 analyst reports by reasoning quality.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      rankedLabels: {
-        type: "array" as const,
-        items: { type: "string" as const },
-        minItems: 5,
-        maxItems: 5,
-        description: "The 5 analyst labels (e.g. 'Analyst A') ordered best reasoning (rank 1) to weakest (rank 5).",
+// Built per-run so min/max item count matches the actual agent count (4) — a
+// hardcoded 5 forced the model to invent a phantom "Analyst E".
+function buildPeerRankingTool(n: number): Anthropic.Tool {
+  const lastLabel = ANALYST_LABELS[n - 1];
+  return {
+    name: "submit_peer_ranking",
+    description: `Submit your anonymous ranking of all ${n} analyst reports by reasoning quality.`,
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        rankedLabels: {
+          type: "array" as const,
+          items: { type: "string" as const },
+          minItems: n,
+          maxItems: n,
+          description: `The ${n} analyst labels (e.g. 'Analyst A') ordered best reasoning (rank 1) to weakest (rank ${n}).`,
+        },
+        reasoning: {
+          type: "object" as const,
+          description: `One-sentence reason per analyst label (keys = 'Analyst A' … '${lastLabel}').`,
+          additionalProperties: { type: "string" as const },
+        },
       },
-      reasoning: {
-        type: "object" as const,
-        description: "One-sentence reason per analyst label (keys = 'Analyst A' … 'Analyst E').",
-        additionalProperties: { type: "string" as const },
-      },
+      required: ["rankedLabels", "reasoning"],
     },
-    required: ["rankedLabels", "reasoning"],
-  },
-};
+  };
+}
 
 const ANALYST_LABELS = ["Analyst A", "Analyst B", "Analyst C", "Analyst D", "Analyst E"];
 
@@ -274,6 +271,8 @@ export async function runPeerReview(
   anthropic: Anthropic
 ): Promise<{ peerRankings: PeerRanking[]; aggregateRankings: AggregateRanking[] }> {
   const roles = agentResults.map((a) => a.role);
+  const n = roles.length;
+  const peerTool = buildPeerRankingTool(n);
 
   // One shared shuffle — all reviewers see the same label-to-role mapping
   const shuffled = [...roles].sort(() => Math.random() - 0.5);
@@ -294,12 +293,12 @@ export async function runPeerReview(
     .join("\n\n");
 
   const systemPrompt = `You are a senior investment analyst conducting a blind peer review.
-You are evaluating the QUALITY OF REASONING in 5 anonymous analyst reports.
+You are evaluating the QUALITY OF REASONING in ${n} anonymous analyst reports.
 Do NOT rank based on whether you agree with the signal — judge reasoning clarity, data usage, and logical coherence only.
 
 ${thesisBlock}
 
-Rank all 5 analysts from best (rank 1) to weakest (rank 5) reasoning quality.
+Rank all ${n} analysts from best (rank 1) to weakest (rank ${n}) reasoning quality.
 Call submit_peer_ranking with rankedLabels (ordered list, best first) and a one-sentence reasoning for each analyst.`;
 
   const peerRankings = await Promise.all(
@@ -309,7 +308,7 @@ Call submit_peer_ranking with rankedLabels (ordered list, best first) and a one-
           model: HAIKU,
           max_tokens: 384,
           system: systemPrompt,
-          tools: [SUBMIT_PEER_RANKING_TOOL],
+          tools: [peerTool],
           tool_choice: { type: "any" },
           messages: [
             {

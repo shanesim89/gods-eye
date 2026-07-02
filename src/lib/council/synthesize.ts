@@ -142,18 +142,6 @@ function buildReferenceBlock(ctx: CouncilContext): string {
   return lines.join("\n");
 }
 
-function buildKronosBlock(ctx: CouncilContext): string | null {
-  const k = ctx.kronos;
-  if (!k) return null;
-  const sign = k.priceDeltaPct >= 0 ? "+" : "";
-  const conviction =
-    k.sampleStd < 1 ? "HIGH" : k.sampleStd < 3 ? "MODERATE" : "LOW";
-  return [
-    "KRONOS AI FORECAST",
-    `Direction: ${k.direction.toUpperCase()} | Change: ${sign}${k.priceDeltaPct.toFixed(2)}% | Model conviction: ${conviction} (std-dev ${k.sampleStd.toFixed(2)}%)`,
-  ].join("\n");
-}
-
 function fmtPct(v: number | null | undefined, dec = 1): string {
   if (v == null || !Number.isFinite(v)) return "n/a";
   return `${v.toFixed(dec)}%`;
@@ -249,7 +237,6 @@ export async function synthesizeVerdict(
     SENTIMENT: 0.20,
     MACRO: 0.20,
     RISK: 0.25,
-    FORECAST: 0.15,  // experimental — modest weight until hit-rate validated
   };
 
   // Apply peer-review weight adjustments: top-ranked +10%, bottom-ranked -5%
@@ -273,10 +260,9 @@ ${(Array.isArray(a.keyPoints) ? a.keyPoints : []).map((p) => `- ${p}`).join("\n"
   const refBlock = buildReferenceBlock(ctx);
   const fundBlock = buildFundamentalsBlock(ctx);
   const analystBlock = buildAnalystSynthBlock(ctx);
-  const kronosBlock = buildKronosBlock(ctx);
   const priceDec = ctx.price < 1 ? 4 : 2;
   const cur = currencySymbol(ctx.currency);
-  const extraContext = [fundBlock, analystBlock, kronosBlock].filter(Boolean).join("\n\n");
+  const extraContext = [fundBlock, analystBlock].filter(Boolean).join("\n\n");
   const peerBlock = aggregateRankings?.length ? buildPeerConsensusBlock(aggregateRankings) : null;
 
   const systemPrompt = `You are the CHIEF INVESTMENT OFFICER of the Investment Council.
@@ -290,10 +276,8 @@ AGENT REPORTS:
 ${agentSummary}
 
 WEIGHTING GUIDE:
-- TECHNICAL: 25%
-- FUNDAMENTAL / ON-CHAIN / FLOW: 30%
-- SENTIMENT: 20%
-- MACRO / RISK: 25%
+- Each agent header above states its weight — use those exact weights (they already
+  incorporate peer-review adjustments). Weight each agent's signal accordingly.
 
 VERDICTS:
 - BUY: 2+ agents bullish, weighted score > 60

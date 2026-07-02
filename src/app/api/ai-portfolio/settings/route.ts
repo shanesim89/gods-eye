@@ -12,6 +12,10 @@ type Patch = {
   dca_amount_usd?: number;
   boost_amount_usd?: number;
   buy_zone_confidence?: number;
+  dip_trigger_price?: number;
+  dip_trigger_amount?: number;
+  dip_trigger_enabled?: boolean;
+  dip_trigger_fired?: boolean;
 };
 
 export async function POST(req: Request) {
@@ -28,6 +32,10 @@ export async function POST(req: Request) {
   if (Number.isFinite(body.buy_zone_confidence)) {
     set.buy_zone_confidence = Math.max(0, Math.min(100, Math.round(body.buy_zone_confidence!)));
   }
+  if (Number.isFinite(body.dip_trigger_price)) set.dip_trigger_price = Number(body.dip_trigger_price).toFixed(2);
+  if (Number.isFinite(body.dip_trigger_amount)) set.dip_trigger_amount = Number(body.dip_trigger_amount).toFixed(2);
+  if (typeof body.dip_trigger_enabled === "boolean") set.dip_trigger_enabled = body.dip_trigger_enabled;
+  if (typeof body.dip_trigger_fired === "boolean") set.dip_trigger_fired = body.dip_trigger_fired;
 
   const updated = await db
     .update(ai_trading_settings)

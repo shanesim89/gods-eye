@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>God's Eye · JARVIS HUD</title>
+<style>
+  :root{
+    --bg:#03060a; --panel:rgba(8,18,28,.55); --line:rgba(64,200,224,.25);
+    --cyan:#46e0f5; --cyan-d:#1c8fa8; --gold:#ffcf4a; --gold-d:#b8881f;
+    --green:#27f59b; --red:#ff5470; --txt:#bfe9f2; --muted:#5b7d8a; --dim:#365360;
+    --mono:'SF Mono',ui-monospace,'Cascadia Code','Roboto Mono',Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:#03060a;color:var(--txt);font-family:var(--mono);font-size:13px}
+  body{
+    min-height:100vh;padding:30px;position:relative;overflow-x:hidden;
+    background:
+      radial-gradient(1200px 700px at 50% -10%,rgba(28,143,168,.10),transparent 60%),
+      radial-gradient(800px 500px at 90% 110%,rgba(184,136,31,.07),transparent 60%),
+      #03060a;
+  }
+  /* scanline overlay */
+  body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:50;
+    background:repeating-linear-gradient(0deg,rgba(70,224,245,.025) 0 1px,transparent 1px 3px);
+    mix-blend-mode:screen;animation:scan 8s linear infinite}
+  @keyframes scan{to{background-position:0 6px}}
+  .tabular{font-variant-numeric:tabular-nums}
+  .up{color:var(--green)} .down{color:var(--red)}
+  .glow-c{text-shadow:0 0 8px rgba(70,224,245,.6)}
+  .glow-g{text-shadow:0 0 8px rgba(255,207,74,.5)}
+
+  .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;
+    border-bottom:1px solid var(--line);padding-bottom:10px}
+  .topbar h1{font-size:15px;letter-spacing:6px;color:var(--cyan);font-weight:700}
+  .topbar .r{font-size:9px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;display:flex;gap:18px}
+  .topbar .r b{color:var(--green)}
+  .liveblip{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 8px var(--green);animation:blip 1.4s ease-in-out infinite;margin-right:6px}
+  @keyframes blip{0%,100%{opacity:1}50%{opacity:.25}}
+
+  /* HUD frame with cut corners + corner brackets */
+  .hud{position:relative;background:var(--panel);backdrop-filter:blur(2px);
+    border:1px solid var(--line);
+    clip-path:polygon(0 14px,14px 0,calc(100% - 14px) 0,100% 14px,100% calc(100% - 14px),calc(100% - 14px) 100%,14px 100%,0 calc(100% - 14px));
+    padding:0;margin-bottom:18px}
+  .hud::before,.hud::after{content:"";position:absolute;width:26px;height:26px;pointer-events:none}
+  .hud::before{top:6px;left:6px;border-top:2px solid var(--cyan);border-left:2px solid var(--cyan);opacity:.7}
+  .hud::after{bottom:6px;right:6px;border-bottom:2px solid var(--cyan);border-right:2px solid var(--cyan);opacity:.7}
+
+  /* ---- header band ---- */
+  .h-band{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;border-bottom:1px solid var(--line)}
+  .h-id{padding:18px 22px;border-right:1px solid var(--line);
+    background:linear-gradient(120deg,rgba(70,224,245,.06),transparent)}
+  .h-id .tk{font-size:30px;font-weight:700;letter-spacing:4px;color:var(--gold)}
+  .h-id .px{font-size:16px;margin-top:2px;letter-spacing:1px}
+  .h-id .vn{font-size:8px;letter-spacing:2px;color:var(--cyan);text-transform:uppercase;margin-top:10px;display:flex;align-items:center}
+  .h-stat{padding:16px 18px;border-right:1px solid var(--line);display:flex;flex-direction:column;justify-content:center;position:relative}
+  .h-stat:last-child{border-right:none}
+  .h-stat .l{font-size:8px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
+  .h-stat .v{font-size:20px;font-weight:700;letter-spacing:1px}
+  .h-stat .s{font-size:8px;color:var(--dim);margin-top:4px;text-transform:uppercase;letter-spacing:1px}
+
+  /* ---- body grid ---- */
+  .h-body{display:grid;grid-template-columns:280px 1fr 300px}
+  .h-cell{padding:18px}
+  .h-cell+.h-cell{border-left:1px solid var(--line)}
+  .pillar{display:flex;align-items:center;gap:8px;margin-bottom:16px}
+  .pillar .t{font-size:9px;letter-spacing:3px;font-weight:700;text-transform:uppercase;color:var(--cyan)}
+  .pillar .ln{flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
+  .pillar .n{font-size:8px;color:var(--dim)}
+
+  /* radial confidence gauge */
+  .radial-wrap{display:flex;flex-direction:column;align-items:center}
+  .radial{position:relative;width:180px;height:180px}
+  .radial .ctr{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .radial .ctr .vd{font-size:30px;font-weight:700;letter-spacing:2px}
+  .radial .ctr .cf{font-size:11px;color:var(--cyan);letter-spacing:2px;margin-top:2px}
+  .radial .ctr .lb{font-size:7px;color:var(--muted);letter-spacing:2px;margin-top:6px}
+  .ring-rot{transform-origin:90px 90px;animation:spin 14s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .ring-rot2{transform-origin:90px 90px;animation:spin 22s linear infinite reverse}
+  .sig-rows{margin-top:8px;width:100%}
+  .sig{display:flex;justify-content:space-between;font-size:10px;padding:5px 0;border-bottom:1px solid rgba(64,200,224,.08)}
+  .sig .k{color:var(--muted);letter-spacing:.5px}
+
+  /* center chart */
+  .chart-head{display:flex;justify-content:space-between;font-size:8px;color:var(--muted);letter-spacing:1px;margin-bottom:6px;text-transform:uppercase}
+  .reticle{position:relative}
+  .tlrow{display:flex;align-items:center;margin-top:14px}
+  .tlrow .dot{width:10px;height:10px;border-radius:50%;border:2px solid var(--bg);box-shadow:0 0 6px currentColor}
+  .tlrow .ln{flex:1;height:1px;background:var(--line)}
+  .tllab{display:flex;justify-content:space-between;margin-top:6px;font-size:7px;color:var(--dim);letter-spacing:1px}
+
+  /* strategy + position cells */
+  .seg{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .cell{position:relative;border:1px solid var(--line);padding:9px 11px;background:rgba(70,224,245,.03);
+    clip-path:polygon(0 0,calc(100% - 8px) 0,100% 8px,100% 100%,8px 100%,0 calc(100% - 8px))}
+  .cell .l{font-size:7px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase}
+  .cell .v{font-size:15px;font-weight:700;margin-top:4px;letter-spacing:.5px}
+  .cell.hot{border-color:rgba(255,84,112,.4);background:rgba(255,84,112,.05)}
+
+  /* arc pnl meter */
+  .pnl-arc{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+  .pnl-arc .big{font-size:22px;font-weight:700}
+  .pnl-arc .sub{font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
+  .alloc-lab{font-size:8px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin:14px 0 6px;display:flex;justify-content:space-between}
+  .alloc{height:7px;background:#02080c;border:1px solid var(--line);display:flex;
+    clip-path:polygon(0 0,calc(100% - 4px) 0,100% 50%,calc(100% - 4px) 100%,0 100%)}
+  .note{font-size:10px;color:var(--dim);margin:20px 4px;letter-spacing:.5px;line-height:1.8}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>G O D ' S &nbsp; E Y E</h1>
+  <div class="r">
+    <span><span class="liveblip"></span>SYSTEM <b>ONLINE</b></span>
+    <span>ENGINE <b>ARMED</b></span>
+    <span>HYPERLIQUID · SPOT</span>
+    <span class="tabular">08 JUN 2026 · 14:32:07 UTC</span>
+  </div>
+</div>
+
+<div class="hud">
+  <!-- HEADER TELEMETRY BAND -->
+  <div class="h-band">
+    <div class="h-id">
+      <span class="tk glow-g">BTC</span>
+      <span class="px tabular">$63,396.50 <span class="down" style="font-size:11px">▾ 1.2%</span></span>
+      <span class="vn"><span class="liveblip"></span>HYPERLIQUID · SPOT · ARMED</span>
+    </div>
+    <div class="h-stat">
+      <div class="l">◐ COUNCIL VERDICT</div>
+      <div class="v up glow-c">BUY · 78%</div>
+      <div class="s">buy-zone active</div>
+    </div>
+    <div class="h-stat">
+      <div class="l">◆ UNREALIZED P&L</div>
+      <div class="v up tabular">+$184.20</div>
+      <div class="s">+7.6% · 0.0412 BTC</div>
+    </div>
+    <div class="h-stat">
+      <div class="l">◇ NEXT EXECUTION</div>
+      <div class="v glow-g tabular" style="color:var(--gold)">JUN 22</div>
+      <div class="s">$150 DCA · T-14D</div>
+    </div>
+  </div>
+
+  <!-- BODY -->
+  <div class="h-body">
+    <!-- SUMMARY · radial gauge -->
+    <div class="h-cell">
+      <div class="pillar"><span class="t">SUMMARY</span><span class="ln"></span><span class="n">[01]</span></div>
+      <div class="radial-wrap">
+        <div class="radial">
+          <svg width="180" height="180" viewBox="0 0 180 180">
+            <!-- outer rotating tick ring -->
+            <g class="ring-rot" opacity=".5">
+              <circle cx="90" cy="90" r="86" fill="none" stroke="rgba(70,224,245,.15)" stroke-width="1"/>
+              <g stroke="var(--cyan)" stroke-width="1">
+                <line x1="90" y1="6" x2="90" y2="14"/><line x1="174" y1="90" x2="166" y2="90"/>
+                <line x1="90" y1="174" x2="90" y2="166"/><line x1="6" y1="90" x2="14" y2="90"/>
+                <line x1="149" y1="31" x2="144" y2="36"/><line x1="149" y1="149" x2="144" y2="144"/>
+                <line x1="31" y1="149" x2="36" y2="144"/><line x1="31" y1="31" x2="36" y2="36"/>
+              </g>
+            </g>
+            <!-- inner counter-rotating dashes -->
+            <circle class="ring-rot2" cx="90" cy="90" r="74" fill="none" stroke="rgba(255,207,74,.25)" stroke-width="1" stroke-dasharray="2 8"/>
+            <!-- confidence arc track -->
+            <circle cx="90" cy="90" r="62" fill="none" stroke="rgba(70,224,245,.12)" stroke-width="8"/>
+            <!-- confidence arc value 78% -->
+            <circle cx="90" cy="90" r="62" fill="none" stroke="var(--green)" stroke-width="8"
+              stroke-linecap="round" stroke-dasharray="389.6" stroke-dashoffset="85.7"
+              transform="rotate(-90 90 90)" style="filter:drop-shadow(0 0 5px rgba(39,245,155,.7))"/>
+          </svg>
+          <div class="ctr">
+            <div class="vd up glow-c">BUY</div>
+            <div class="cf tabular">78%</div>
+            <div class="lb">CONFIDENCE</div>
+          </div>
+        </div>
+      </div>
+      <div class="sig-rows">
+        <div class="sig"><span class="k">SIGNAL</span><span class="up">BUY-ZONE</span></div>
+        <div class="sig"><span class="k">DIP DEPTH</span><span class="tabular">-14%</span></div>
+        <div class="sig"><span class="k">VS CEILING</span><span class="down tabular">+5.7% OVER</span></div>
+        <div class="sig"><span class="k">LAST RUN</span><span class="tabular">JUN 08 · SKIP</span></div>
+      </div>
+    </div>
+
+    <!-- CENTER · targeting chart -->
+    <div class="h-cell">
+      <div class="pillar"><span class="t">PRICE TRACK · 30D</span><span class="ln"></span><span class="n">[02]</span></div>
+      <div class="chart-head"><span>● FILL &nbsp; ● SKIP &nbsp; ◆ CEILING</span><span class="tabular">RANGE $58,120 — $66,900</span></div>
+      <div class="reticle">
+        <svg width="100%" height="200" viewBox="0 0 600 200" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="area" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#46e0f5" stop-opacity=".28"/><stop offset="1" stop-color="#46e0f5" stop-opacity="0"/></linearGradient>
+          </defs>
+          <!-- grid -->
+          <g stroke="rgba(64,200,224,.08)" stroke-width="1">
+            <line x1="0" y1="50" x2="600" y2="50"/><line x1="0" y1="100" x2="600" y2="100"/><line x1="0" y1="150" x2="600" y2="150"/>
+            <line x1="150" y1="0" x2="150" y2="200"/><line x1="300" y1="0" x2="300" y2="200"/><line x1="450" y1="0" x2="450" y2="200"/>
+          </g>
+          <!-- entry zone -->
+          <rect x="0" y="118" width="600" height="34" fill="#27f59b" opacity=".06"/>
+          <text x="8" y="148" fill="#27f59b" font-size="9" font-family="monospace" opacity=".7">▸ ENTRY ZONE</text>
+          <!-- ceiling -->
+          <line x1="0" y1="72" x2="600" y2="72" stroke="#ff5470" stroke-width="1.2" stroke-dasharray="6 5" opacity=".85"/>
+          <text x="8" y="66" fill="#ff5470" font-size="9" font-family="monospace">◆ CEILING $60,000</text>
+          <!-- area + line -->
+          <path d="M0,118 L43,112 L86,128 L129,100 L172,112 L215,84 L258,102 L301,74 L344,90 L387,60 L430,78 L473,54 L516,68 L559,44 L600,52 L600,200 L0,200 Z" fill="url(#area)"/>
+          <polyline points="0,118 43,112 86,128 129,100 172,112 215,84 258,102 301,74 344,90 387,60 430,78 473,54 516,68 559,44 600,52" fill="none" stroke="#46e0f5" stroke-width="2" style="filter:drop-shadow(0 0 4px rgba(70,224,245,.6))"/>
+          <!-- exec dots -->
+          <circle cx="86" cy="128" r="4" fill="#27f59b" stroke="#03060a" stroke-width="1.5"/>
+          <circle cx="258" cy="102" r="4" fill="#27f59b" stroke="#03060a" stroke-width="1.5"/>
+          <circle cx="430" cy="78" r="4" fill="#5b7d8a" stroke="#03060a" stroke-width="1.5"/>
+          <!-- live reticle on last point -->
+          <g>
+            <circle cx="600" cy="52" r="6" fill="none" stroke="var(--gold)" stroke-width="1.5"/>
+            <line x1="588" y1="52" x2="600" y2="52" stroke="var(--gold)" stroke-width="1"/>
+            <line x1="600" y1="40" x2="600" y2="52" stroke="var(--gold)" stroke-width="1"/>
+          </g>
+        </svg>
+      </div>
+      <!-- execution timeline -->
+      <div class="tlrow">
+        <span class="dot" style="background:#27f59b;color:#27f59b"></span><span class="ln"></span>
+        <span class="dot" style="background:#27f59b;color:#27f59b"></span><span class="ln"></span>
+        <span class="dot" style="background:#27f59b;color:#27f59b"></span><span class="ln"></span>
+        <span class="dot" style="background:#5b7d8a;color:#5b7d8a"></span><span class="ln"></span>
+        <span class="dot" style="background:#ffcf4a;color:#ffcf4a"></span>
+      </div>
+      <div class="tllab"><span>APR13·$150</span><span>APR27·$150</span><span>MAY11·$250▲</span><span>JUN08·SKIP</span><span>JUN22·NEXT</span></div>
+    </div>
+
+    <!-- RIGHT · strategy + position -->
+    <div class="h-cell">
+      <div class="pillar"><span class="t">STRATEGY</span><span class="ln"></span><span class="n">[03]</span></div>
+      <div class="seg">
+        <div class="cell hot"><div class="l">PRICE CEILING</div><div class="v down tabular">$60K</div></div>
+        <div class="cell"><div class="l">DCA / CYCLE</div><div class="v glow-g tabular" style="color:var(--gold)">$150</div></div>
+        <div class="cell"><div class="l">BOOST @ BZ</div><div class="v up tabular">$250</div></div>
+        <div class="cell"><div class="l">CADENCE</div><div class="v tabular">14D</div></div>
+        <div class="cell"><div class="l">MIN CONF</div><div class="v tabular">65%</div></div>
+        <div class="cell"><div class="l">MONTH CAP</div><div class="v tabular">62%</div></div>
+      </div>
+
+      <div class="pillar" style="margin-top:20px"><span class="t">POSITION</span><span class="ln"></span><span class="n">[04]</span></div>
+      <div class="pnl-arc">
+        <svg width="58" height="58" viewBox="0 0 58 58">
+          <circle cx="29" cy="29" r="24" fill="none" stroke="rgba(39,245,155,.12)" stroke-width="5"/>
+          <circle cx="29" cy="29" r="24" fill="none" stroke="var(--green)" stroke-width="5" stroke-linecap="round"
+            stroke-dasharray="150.8" stroke-dashoffset="139" transform="rotate(-90 29 29)"
+            style="filter:drop-shadow(0 0 4px rgba(39,245,155,.7))"/>
+          <text x="29" y="33" text-anchor="middle" fill="#27f59b" font-size="12" font-weight="700" font-family="monospace">+7.6%</text>
+        </svg>
+        <div>
+          <div class="big up tabular">+$184.20</div>
+          <div class="sub">unrealized · 3 fills</div>
+        </div>
+      </div>
+      <div class="seg">
+        <div class="cell"><div class="l">HOLDING</div><div class="v tabular" style="font-size:12px">0.0412</div></div>
+        <div class="cell"><div class="l">VALUE</div><div class="v tabular" style="font-size:12px">$2,612</div></div>
+        <div class="cell"><div class="l">AVG ENTRY</div><div class="v tabular" style="font-size:12px">$58,920</div></div>
+        <div class="cell"><div class="l">MARK</div><div class="v tabular" style="font-size:12px">$63,396</div></div>
+      </div>
+      <div class="alloc-lab"><span>PORTFOLIO ALLOCATION</span><span class="tabular" style="color:var(--gold)">34%</span></div>
+      <div class="alloc"><div style="width:34%;background:linear-gradient(90deg,var(--gold-d),var(--gold))"></div><div style="flex:1;background:rgba(64,200,224,.08)"></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  ▸ JARVIS HUD · DESIGN D-X — radial confidence gauge w/ counter-rotating tick rings · targeting reticle on live price · cut-corner cells · animated scanlines + live blips · arc P&L meter · execution timeline.<br>
+  ▸ 4 numbered modules: [01] SUMMARY · [02] PRICE TRACK · [03] STRATEGY · [04] POSITION. Cyan = data, gold = your config/action, green/red = P&L.<br>
+  ▸ All animation is CSS — ports cleanly to React. Recharts replaces the SVG chart with live OHLC.
+</div>
+
+</body>
+</html>

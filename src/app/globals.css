@@ -1,18 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #0a0a0a;
-  --panel: #121212;
-  --border: #1f1f1f;
-  --grid: #161616;
-  --amber: #ffb000;
-  --green: #00ff7f;
-  --red: #ff3b3b;
-  --cyan: #00e5ff;
-  --purple: #b066ff;
-  --text: #d4d4d4;
-  --muted: #6b6b6b;
-  --dim: #3a3a3a;
+  --bg: #0a0e14;
+  --panel: #101b29;
+  --border: #2f4a5e;
+  --grid: #16222f;
+  --amber: #ffc94d;
+  --green: #4dffb0;
+  --red: #ff7575;
+  --cyan: #3df0ff;
+  --purple: #c89bff;
+  --text: #eef9ff;
+  --muted: #c4e2f0;
+  --dim: #a8cadd;
 }
 
 @theme inline {
@@ -48,4 +48,7 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: var(--dim); }
 
 .dotted-row { border-bottom: 1px dotted var(--dim); }
-.amber-border-b { border-bottom: 1px solid var(--amber); }
+.amber-border-b { border-bottom: 1px solid var(--cyan); box-shadow: 0 1px 6px rgba(61,240,255,0.25); }
+
+.hud-glow { box-shadow: 0 0 0 1px rgba(61,240,255,0.15), 0 0 12px rgba(61,240,255,0.08); }
+.hud-text-glow { text-shadow: 0 0 8px rgba(61,240,255,0.45); }

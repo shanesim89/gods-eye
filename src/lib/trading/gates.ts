@@ -23,6 +23,7 @@ export const WHEEL_GATES = [
   "due",
   "settle",
   "council",
+  "ivr",
   "conviction",
   "collateral",
   "select_contract",

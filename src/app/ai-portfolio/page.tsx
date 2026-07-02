@@ -14,6 +14,24 @@ const DASHBOARDS = [
   { href: null, label: "ETF / UNIT TRUST", desc: "Coming soon", live: false },
   { href: null, label: "STOCKS", desc: "Coming soon", live: false },
   { href: "/ai-portfolio/options", label: "OPTIONS", desc: "The Wheel + council long plays — PAPER. Defined-risk income.", live: true },
+  {
+    href: "/ai-portfolio/quant-scalper",
+    label: "QUANT SCALPER",
+    desc: "Research-gated quant bot — TSMOM BTC/ETH/BNB. Gate ladder: research → backtest → paper → live.",
+    live: true,
+  },
+  {
+    href: "/ai-portfolio/gold-scalper",
+    label: "GOLD PRINTING MACHINES",
+    desc: "XAUUSD long+short 1m session-VWAP fade — PAPER. Self-tuning, regime + spread + Kronos gated.",
+    live: true,
+  },
+  {
+    href: "/ai-portfolio/pdhl-scalper",
+    label: "PDH/PDL SCALPER",
+    desc: "XAUUSD long+short 1m PDH/PDL break+retest — PAPER. 2.5R fixed, walk-forward OOS Sharpe 5.0.",
+    live: true,
+  },
 ];
 
 export default async function AiPortfolioPage() {

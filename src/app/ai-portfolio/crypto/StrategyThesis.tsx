@@ -26,7 +26,7 @@ const GATES: { n: string; label: string; detail: string }[] = [
   { n: "01", label: "KILL SWITCH", detail: "If disarmed, the engine halts before touching any token." },
   { n: "02", label: "DUE CHECK", detail: "Acts only when the token's next run is due. While waiting for a dip it re-checks daily; after a fill it waits the full cadence." },
   { n: "03", label: "PRICE CEILING", detail: "Primary entry gate. If price is above the token's ceiling, it skips and re-checks tomorrow. No buy until price falls into range." },
-  { n: "04", label: "COUNCIL VERDICT", detail: "4 AI agents + Kronos forecast vote BUY / HOLD / SELL with a confidence score." },
+  { n: "04", label: "COUNCIL VERDICT", detail: "4 AI agents vote BUY / HOLD / SELL with a confidence score." },
   { n: "05", label: "SELL-SKIP", detail: "A strong SELL (≥ threshold) skips the period entirely, up to the max consecutive-skip limit — then forces a buy." },
   { n: "06", label: "BUY-ZONE SIZING", detail: "BUY + confidence ≥ min + price inside the council's entry zone → boosted size. Otherwise base size." },
   { n: "07", label: "MONTHLY CAP", detail: "Skips if the order would push month-to-date spend over the cap." },

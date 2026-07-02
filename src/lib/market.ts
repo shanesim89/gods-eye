@@ -288,3 +288,65 @@ export async function getPriceHistory(
     return null;
   }
 }
+
+export type OhlcBar = { t: number; o: number; h: number; l: number; c: number };
+
+async function readOhlcCache(key: string): Promise<OhlcBar[] | null> {
+  const r = await db
+    .select()
+    .from(market_data_cache)
+    .where(eq(market_data_cache.ticker, key))
+    .limit(1);
+  if (r.length === 0) return null;
+  const row = r[0];
+  if (Date.now() - new Date(row.fetched_at).getTime() > HIST_TTL_MS) return null;
+  const p = row.payload as { bars?: OhlcBar[] };
+  return Array.isArray(p?.bars) ? p.bars : null;
+}
+
+async function writeOhlcCache(key: string, bars: OhlcBar[]) {
+  const payload = { bars };
+  await db
+    .insert(market_data_cache)
+    .values({ ticker: key, payload, fetched_at: new Date() })
+    .onConflictDoUpdate({
+      target: market_data_cache.ticker,
+      set: { payload, fetched_at: new Date() },
+    });
+}
+
+/**
+ * Fetch OHLC candles for a crypto ticker (CoinGecko /coins/{id}/ohlc). CoinGecko
+ * auto-picks granularity by the `days` window: 3-30d → 4h candles, 31-365d → 4d
+ * candles. Cached ~1h. Returns null on failure / non-crypto.
+ */
+export async function getPriceOHLC(
+  ticker: string,
+  days = 90
+): Promise<OhlcBar[] | null> {
+  if (!ticker || !ticker.trim()) return null;
+  const normalized = normalizeTicker(ticker, "crypto");
+  const cacheK = `crypto-ohlc:${normalized}:${days}`;
+
+  const cached = await readOhlcCache(cacheK);
+  if (cached) return cached;
+
+  const id = await resolveCoinGeckoId(normalized);
+  if (!id) return null;
+  try {
+    const url = `https://api.coingecko.com/api/v3/coins/${id}/ohlc?vs_currency=usd&days=${days}`;
+    const headers: Record<string, string> = {};
+    if (COINGECKO) headers["x-cg-demo-api-key"] = COINGECKO;
+    const r = await fetch(url, { cache: "no-store", headers });
+    if (!r.ok) return null;
+    const j = (await r.json()) as [number, number, number, number, number][];
+    const bars = (j ?? [])
+      .filter((row) => Array.isArray(row) && row.length === 5)
+      .map(([t, o, h, l, c]) => ({ t: Math.round(t / 1000), o, h, l, c }));
+    if (bars.length === 0) return null;
+    await writeOhlcCache(cacheK, bars);
+    return bars;
+  } catch {
+    return null;
+  }
+}

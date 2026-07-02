@@ -1,9 +1,10 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
-import { ai_options_settings } from "@/db/schema";
-import { runScan, writeScanCache, writeHistory, getYesterdaySnapshot } from "@/lib/crypto/scanner";
-import { runScannerAlerts } from "@/lib/crypto/scanner-alerts";
+import { ai_options_settings, ai_trading_settings } from "@/db/schema";
+import { runScan, writeScanCache, writeHistory } from "@/lib/crypto/scanner";
 import { runOptionsForUser } from "@/lib/options/engine";
+import { buildPortfolioDigest } from "@/lib/trading/portfolio-digest";
+import { sendTelegram } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -31,16 +32,16 @@ export async function GET(req: Request) {
     } else {
       await writeScanCache(result);
       await writeHistory(result);
-      const yesterday = await getYesterdaySnapshot();
-      const alerts = await runScannerAlerts(result, yesterday);
-      out.scanner = { ok: true, universe: result.universe, passed: result.passed, kept: result.coins.length, alerts };
+      out.scanner = { ok: true, universe: result.universe, passed: result.passed, kept: result.coins.length };
     }
   } catch (err) {
     out.scanner = { ok: false, error: err instanceof Error ? err.message : "unknown" };
   }
 
   // ── Options wheel (Mondays only, UTC) ────────────────────────────────────
-  const isMonday = new Date().getUTCDay() === 1;
+  const utcDay = new Date().getUTCDay();
+  const forceWednesday = new URL(req.url).searchParams.has("force_wednesday");
+  const isMonday = utcDay === 1;
   if (isMonday) {
     try {
       const armed = await db
@@ -61,6 +62,25 @@ export async function GET(req: Request) {
     }
   } else {
     out.options = { ran: false, reason: "not Monday (UTC)" };
+  }
+
+  // ── Portfolio digest (Wednesdays only, UTC) ──────────────────────────────
+  const isWednesday = utcDay === 3 || forceWednesday;
+  if (isWednesday) {
+    try {
+      const users = await db
+        .select({ user_id: ai_trading_settings.user_id })
+        .from(ai_trading_settings);
+      for (const { user_id } of users) {
+        const msg = await buildPortfolioDigest(user_id);
+        if (msg) await sendTelegram(msg);
+      }
+      out.portfolio_digest = { ran: true, users: users.length };
+    } catch (err) {
+      out.portfolio_digest = { ran: false, error: err instanceof Error ? err.message : "unknown" };
+    }
+  } else {
+    out.portfolio_digest = { ran: false, reason: "not Wednesday (UTC)" };
   }
 
   return Response.json({ ok: true, ...out });
