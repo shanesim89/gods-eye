@@ -274,7 +274,7 @@ export const ai_options_settings = pgTable("ai_options_settings", {
   pmcc_leaps_delta: integer("pmcc_leaps_delta").default(80).notNull(), // 0.80 deep-ITM LEAPS
   pmcc_leaps_dte_min: integer("pmcc_leaps_dte_min").default(180).notNull(),
   pmcc_leaps_dte_max: integer("pmcc_leaps_dte_max").default(365).notNull(),
-  pmcc_budget_usd: numeric("pmcc_budget_usd", { precision: 18, scale: 2 }).default("2000").notNull(), // max debit per LEAPS (hard ceiling; % sizing below governs)
+  pmcc_budget_usd: numeric("pmcc_budget_usd", { precision: 18, scale: 2 }).default("10000").notNull(), // max debit per LEAPS (hard ceiling; matches default account_size_usd so pmcc_budget_pct governs, not this)
   // ── Live-account realism (whole contracts, $-account sizing, fills) ────────
   account_size_usd: numeric("account_size_usd", { precision: 18, scale: 2 }).default("10000").notNull(),
   whole_contracts: boolean("whole_contracts").default(false).notNull(), // 1 contract = 100 shares, no fractional multipliers
