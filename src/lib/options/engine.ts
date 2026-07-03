@@ -522,6 +522,7 @@ export async function runOptionsForUser(
                     updated_at: now,
                   },
                 });
+              runCashUsed += leaps.collateralUsd;
               trace.pass("collateral", `$${leaps.collateralUsd.toFixed(0)} debit`);
               trace.pass("select_contract", `${leaps.contractSymbol} Δ${leaps.greeks.delta.toFixed(2)}`);
               trace.pass("execute", `LEAPS bought, debit $${leaps.premiumTotal.toFixed(2)}`);
