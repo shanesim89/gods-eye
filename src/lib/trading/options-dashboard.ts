@@ -12,6 +12,9 @@ function dte(expiry: Date, now = new Date()): number {
   return Math.max(0, Math.round((expiry.getTime() - now.getTime()) / 86_400_000));
 }
 
+/** All wheel-machine states — wheel pair + PMCC pair. */
+export type WheelState = "cash" | "holding_stock" | "pmcc_cash" | "pmcc_holding_leaps";
+
 /** Wire-safe (JSON) versions — Date fields become ISO strings. */
 export type WireOpenPosition = {
   id: string;
@@ -34,7 +37,7 @@ export type WireOptionCardRow = {
   spot: number | null;
   changePct: number | null;
   verdict: Verdict | null;
-  wheelState: "cash" | "holding_stock";
+  wheelState: WheelState;
   shares: number;
   costBasis: number | null;
   nextRun: string | null;
@@ -45,13 +48,18 @@ export type WireOptionCardRow = {
   targetDelta: number;
   dteMin: number;
   dteMax: number;
+  // ── PMCC leverage read ──
+  deltaDollars: number;    // Σ position-delta × mult × contracts × spot (short legs negative)
+  thetaPerDay: number;     // Σ position theta × mult × contracts (shorts collect, longs bleed)
+  netDebit: number;        // open LEAPS capital in this underlying
+  leapsDte: number | null; // countdown to the LEAPS roll decision
 };
 
 export type WireUnderlyingThesis = {
   symbol: string;
   assetClass: string;
   spot: number | null;
-  wheelState: "cash" | "holding_stock";
+  wheelState: WheelState;
   shares: number;
   costBasis: number | null;
   verdict: string | null;
@@ -76,6 +84,12 @@ export type OptionsDashboardData = {
   totalPnl: number;
   totalPremiumIncome: number;
   totalOpenCount: number;
+  // ── Portfolio leverage ──
+  accountSize: number;
+  wholeContracts: boolean;
+  pmccBudgetPct: number;
+  effectiveLeverage: number;  // |Σ deltaDollars| / accountSize
+  totalThetaPerDay: number;   // net theta capture across the book
   alloc: { symbol: string; value: number; pct: number }[];
   rows: WireOptionCardRow[];
   thesisUnderlyings: WireUnderlyingThesis[];
@@ -85,7 +99,7 @@ export type OptionsDashboardData = {
 
 export async function getOptionsDashboardData(userId: string): Promise<OptionsDashboardData> {
   const settings = await getOrCreateOptionsSettings(userId);
-  const underlyings = (settings.underlyings as Underlying[]) ?? [];
+  const configured = (settings.underlyings as Underlying[]) ?? [];
 
   const wheelRows = await db.select().from(ai_options_wheel).where(eq(ai_options_wheel.user_id, userId));
   const wheelByUnderlying = new Map(wheelRows.map((r) => [r.underlying, r]));
@@ -95,6 +109,20 @@ export async function getOptionsDashboardData(userId: string): Promise<OptionsDa
     .from(ai_options_positions)
     .where(and(eq(ai_options_positions.user_id, userId), eq(ai_options_positions.status, "open")))
     .orderBy(desc(ai_options_positions.opened_at));
+
+  // The screener can open diagonals on symbols outside the configured list —
+  // surface any underlying with a live LEAPS or open position as its own card.
+  const configuredSymbols = new Set(configured.map((u) => u.symbol));
+  const extraSymbols = new Set<string>();
+  for (const w of wheelRows) if (w.state === "pmcc_holding_leaps" && !configuredSymbols.has(w.underlying)) extraSymbols.add(w.underlying);
+  for (const p of openPos) if (!configuredSymbols.has(p.underlying)) extraSymbols.add(p.underlying);
+  const underlyings: Underlying[] = [
+    ...configured,
+    ...[...extraSymbols].map((symbol) => {
+      const posClass = openPos.find((p) => p.underlying === symbol)?.asset_class;
+      return { symbol, class: (posClass ?? "equity") as Underlying["class"], mode: "pmcc" as const };
+    }),
+  ];
 
   const settledAgg = await db
     .select({
@@ -169,13 +197,28 @@ export async function getOptionsDashboardData(userId: string): Promise<OptionsDa
       const totalRealizedPnl = settledByUnderlying.get(symbol) ?? 0;
       const premiumIncome = totalRealizedPnl > 0 ? totalRealizedPnl : 0;
 
+      // Leverage read: delta-dollars + daily theta from entry greeks × current spot.
+      const spotNow = priceData?.price ?? null;
+      let deltaDollars = 0;
+      let thetaPerDay = 0;
+      let netDebit = 0;
+      for (const p of myOpen) {
+        const greeks = (p.greeks as Record<string, number> | null) ?? {};
+        const mult = parseFloat(p.contract_multiplier) * p.contracts;
+        const sign = p.side === "short" ? -1 : 1;
+        if (typeof greeks.delta === "number" && spotNow) deltaDollars += sign * greeks.delta * mult * spotNow;
+        if (typeof greeks.theta === "number") thetaPerDay += sign * greeks.theta * mult;
+        if (p.strategy === "pmcc_leaps") netDebit += parseFloat(p.collateral_usd);
+      }
+      const leapsDte = wheel?.leaps_expiry ? dte(wheel.leaps_expiry, now) : null;
+
       return {
         underlying: symbol,
         assetClass,
-        spot: priceData?.price ?? null,
+        spot: spotNow,
         changePct: priceData?.change_pct ?? null,
         verdict,
-        wheelState: (wheel?.state ?? "cash") as "cash" | "holding_stock",
+        wheelState: (wheel?.state ?? (und.mode === "pmcc" ? "pmcc_cash" : "cash")) as WheelState,
         shares: parseFloat(wheel?.shares ?? "0"),
         costBasis: wheel?.cost_basis ? parseFloat(wheel.cost_basis) : null,
         nextRun: wheel?.next_run_at ? wheel.next_run_at.toISOString() : null,
@@ -186,6 +229,10 @@ export async function getOptionsDashboardData(userId: string): Promise<OptionsDa
         targetDelta: settings.target_delta,
         dteMin: settings.dte_min,
         dteMax: settings.dte_max,
+        deltaDollars,
+        thetaPerDay,
+        netDebit,
+        leapsDte,
       };
     })
   );
@@ -247,6 +294,10 @@ export async function getOptionsDashboardData(userId: string): Promise<OptionsDa
       })
   );
 
+  const accountSize = parseFloat(settings.account_size_usd);
+  const netDeltaDollars = rows.reduce((s, r) => s + r.deltaDollars, 0);
+  const totalThetaPerDay = rows.reduce((s, r) => s + r.thetaPerDay, 0);
+
   return {
     killSwitch: settings.kill_switch,
     lastAlert: settings.last_alert,
@@ -262,6 +313,11 @@ export async function getOptionsDashboardData(userId: string): Promise<OptionsDa
     totalPnl,
     totalPremiumIncome,
     totalOpenCount,
+    accountSize,
+    wholeContracts: settings.whole_contracts,
+    pmccBudgetPct: settings.pmcc_budget_pct,
+    effectiveLeverage: accountSize > 0 ? Math.abs(netDeltaDollars) / accountSize : 0,
+    totalThetaPerDay,
     alloc,
     rows,
     thesisUnderlyings,

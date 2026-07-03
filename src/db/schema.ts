@@ -274,7 +274,20 @@ export const ai_options_settings = pgTable("ai_options_settings", {
   pmcc_leaps_delta: integer("pmcc_leaps_delta").default(80).notNull(), // 0.80 deep-ITM LEAPS
   pmcc_leaps_dte_min: integer("pmcc_leaps_dte_min").default(180).notNull(),
   pmcc_leaps_dte_max: integer("pmcc_leaps_dte_max").default(365).notNull(),
-  pmcc_budget_usd: numeric("pmcc_budget_usd", { precision: 18, scale: 2 }).default("2000").notNull(), // max debit per LEAPS
+  pmcc_budget_usd: numeric("pmcc_budget_usd", { precision: 18, scale: 2 }).default("2000").notNull(), // max debit per LEAPS (hard ceiling; % sizing below governs)
+  // ── Live-account realism (whole contracts, $-account sizing, fills) ────────
+  account_size_usd: numeric("account_size_usd", { precision: 18, scale: 2 }).default("10000").notNull(),
+  whole_contracts: boolean("whole_contracts").default(false).notNull(), // 1 contract = 100 shares, no fractional multipliers
+  profit_take_pct: integer("profit_take_pct").default(60).notNull(), // close short at % of max profit
+  roll_dte: integer("roll_dte").default(21).notNull(), // roll/close short at this DTE
+  short_dte_min: integer("short_dte_min").default(30).notNull(), // PMCC short-leg window (separate from CSP dte)
+  short_dte_max: integer("short_dte_max").default(45).notNull(),
+  pmcc_budget_pct: integer("pmcc_budget_pct").default(60).notNull(), // LEAPS debit ≤ % of account
+  commission_per_contract: numeric("commission_per_contract", { precision: 8, scale: 4 }).default("0.65").notNull(),
+  slippage_pct: integer("slippage_pct").default(3).notNull(), // half-spread haircut, % of premium
+  leaps_roll_dte: integer("leaps_roll_dte").default(100).notNull(), // roll LEAPS below this DTE
+  pmcc_watchlist: jsonb("pmcc_watchlist").default(["SOFI", "F", "AAL", "PLTR", "INTC", "IWM"]).notNull(),
+  auto_select_underlying: boolean("auto_select_underlying").default(false).notNull(),
   // [{ "symbol": "SPY", "class": "etf", "mode": "wheel" | "pmcc" }] — mode optional, defaults "wheel"
   underlyings: jsonb("underlyings")
     .default([
@@ -330,6 +343,8 @@ export const ai_options_positions = pgTable("ai_options_positions", {
   council_confidence: integer("council_confidence"),
   status: text("status").default("open").notNull(), // open | expired_worthless | assigned | called_away | closed
   realized_pnl: numeric("realized_pnl", { precision: 18, scale: 2 }),
+  exit_reason: text("exit_reason"), // expiry | profit_take | roll | leaps_roll | deep_itm_harvest | assigned_early
+  exit_premium: numeric("exit_premium", { precision: 18, scale: 4 }), // per-unit close price for early exits
   opened_at: timestamp("opened_at").defaultNow().notNull(),
   settled_at: timestamp("settled_at"),
 });

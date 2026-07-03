@@ -9,10 +9,13 @@ import {
 } from "@/db/schema";
 import { runCouncil } from "@/lib/council/run";
 import { getPrice, getPriceHistory } from "@/lib/market";
-import { histVol } from "./blackscholes";
+import { bsGreeks, bsPrice, histVol, yearsTo } from "./blackscholes";
+import type { OptType } from "./blackscholes";
 import { ivVsHv } from "./analytics";
 import { selectCSP, selectCC, selectLongPlay, selectLeaps, selectPmccShort, settle } from "./strategy";
 import type { OptionsStrategyConfig } from "./strategy";
+import { screenPmccCandidates, type ScreenerResult } from "./screener";
+import { isCryptoUnderlying } from "./symbol";
 import type { Underlying } from "./settings";
 import { newTrace, WHEEL_GATES } from "@/lib/trading/gates";
 
@@ -37,6 +40,31 @@ function weekKey(d: Date): string {
   const day = d.getUTCDay() || 7;
   const monday = new Date(ms - (day - 1) * 86_400_000);
   return monday.toISOString().slice(0, 10);
+}
+
+function cfgFromSettings(settings: typeof ai_options_settings.$inferSelect): OptionsStrategyConfig {
+  return {
+    targetDelta: settings.target_delta,
+    dteMin: settings.dte_min,
+    dteMax: settings.dte_max,
+    riskFreeRate: parseFloat(settings.risk_free_rate),
+    convictionThreshold: settings.conviction_threshold,
+    longPlayBudgetUsd: parseFloat(settings.long_play_budget_usd),
+    collateralPerContractUsd: parseFloat(settings.collateral_per_contract_usd),
+    pmccLeapsDelta: settings.pmcc_leaps_delta,
+    pmccLeapsDteMin: settings.pmcc_leaps_dte_min,
+    pmccLeapsDteMax: settings.pmcc_leaps_dte_max,
+    pmccBudgetUsd: parseFloat(settings.pmcc_budget_usd),
+    accountSizeUsd: parseFloat(settings.account_size_usd),
+    wholeContracts: settings.whole_contracts,
+    shortDteMin: settings.short_dte_min,
+    shortDteMax: settings.short_dte_max,
+    pmccBudgetPct: settings.pmcc_budget_pct,
+    profitTakePct: settings.profit_take_pct,
+    rollDte: settings.roll_dte,
+    commissionPerContract: parseFloat(settings.commission_per_contract),
+    slippagePct: settings.slippage_pct,
+  };
 }
 
 async function setAlert(userId: string, msg: string) {
@@ -65,19 +93,7 @@ export async function runOptionsForUser(
   const now = new Date();
   const outcomes: OptionOutcome[] = [];
 
-  const cfg: OptionsStrategyConfig = {
-    targetDelta: settings.target_delta,
-    dteMin: settings.dte_min,
-    dteMax: settings.dte_max,
-    riskFreeRate: parseFloat(settings.risk_free_rate),
-    convictionThreshold: settings.conviction_threshold,
-    longPlayBudgetUsd: parseFloat(settings.long_play_budget_usd),
-    collateralPerContractUsd: parseFloat(settings.collateral_per_contract_usd),
-    pmccLeapsDelta: settings.pmcc_leaps_delta,
-    pmccLeapsDteMin: settings.pmcc_leaps_dte_min,
-    pmccLeapsDteMax: settings.pmcc_leaps_dte_max,
-    pmccBudgetUsd: parseFloat(settings.pmcc_budget_usd),
-  };
+  const cfg = cfgFromSettings(settings);
 
   // Wheel snapshot taken BEFORE settlement — used to read the cost basis of shares
   // being called away (that basis was set in a prior run, so the pre-settle snapshot
@@ -112,7 +128,8 @@ export async function runOptionsForUser(
         spotAtExpiry,
         pos.contracts,
         parseFloat(pos.contract_multiplier),
-        ccCostBasis != null ? parseFloat(ccCostBasis) : undefined
+        ccCostBasis != null ? parseFloat(ccCostBasis) : undefined,
+        cfg.wholeContracts ? cfg.commissionPerContract * pos.contracts : 0
       );
 
       await db
@@ -120,6 +137,7 @@ export async function runOptionsForUser(
         .set({
           status: result.status,
           realized_pnl: result.realizedPnl.toFixed(2),
+          exit_reason: "expiry",
           settled_at: now,
         })
         .where(eq(ai_options_positions.id, pos.id));
@@ -218,9 +236,26 @@ export async function runOptionsForUser(
   const openCollateral = parseFloat(openCollateralRow[0]?.total ?? "0");
   const maxCollateral = parseFloat(settings.max_collateral_usd);
 
+  // Whole-contracts mode: the book must fit inside the account. Capital committed =
+  // CSP collateral + LEAPS debits across ALL open positions; what's left is the cash
+  // available for new collateral/debits (keeps the ~(100−pmcc_budget_pct)% reserve honest).
+  const openCapitalRow = await db
+    .select({ total: sql<string>`coalesce(sum(${ai_options_positions.collateral_usd}), 0)` })
+    .from(ai_options_positions)
+    .where(
+      and(eq(ai_options_positions.user_id, userId), eq(ai_options_positions.status, "open"))
+    );
+  const openCapital = parseFloat(openCapitalRow[0]?.total ?? "0");
+  const availableCash = Math.max(0, cfg.accountSizeUsd - openCapital);
+
   // Long-play budget is a shared pool for this run, not per-trade — otherwise N
   // underlyings could each spend the full budget every week (M5).
   let longSpent = 0;
+
+  // Screener runs at most once per run (lazily) and is shared across pmcc_cash slots.
+  let screenerResult: ScreenerResult | null = null;
+  // Track cash committed by screened buys within this run.
+  let runCashUsed = 0;
 
   for (const und of underlyings) {
     const { symbol, class: assetClass } = und;
@@ -229,6 +264,13 @@ export async function runOptionsForUser(
     try {
       const wheel = wheelByUnderlying.get(symbol);
       const nextRun = wheel?.next_run_at ?? null;
+
+      // GUARDRAIL 1.5: whole-contracts realism — crypto options (Deribit, 1-coin
+      // contracts) don't fit a $5-15k account. Skip cleanly rather than fake it.
+      if (cfg.wholeContracts && assetClass === "crypto") {
+        outcomes.push({ underlying: symbol, status: "skipped", reason: "not affordable at account size (whole contracts)" });
+        continue;
+      }
 
       // GUARDRAIL 2: due-check.
       if (!opts.force && nextRun && nextRun > now) {
@@ -337,7 +379,99 @@ export async function runOptionsForUser(
             outcomes.push({ underlying: symbol, status: "skipped", reason: `SELL signal (conf ${verdict.confidence}) — skip LEAPS` });
           } else {
             trace.pass("conviction", `${verdict.verdict} ${verdict.confidence}% — ok to buy LEAPS`);
-            const leaps = selectLeaps(symbol, spot, sigma, cfg);
+
+            // ── Auto-select: screen the watchlist with REAL chains and buy the
+            // top-ranked affordable LEAPS instead of the configured symbol. The
+            // daily manage() covers it with a short call on its next run.
+            if (settings.auto_select_underlying && cfg.wholeContracts && assetClass !== "crypto") {
+              screenerResult ??= await screenPmccCandidates({
+                watchlist: (settings.pmcc_watchlist as string[]) ?? [],
+                accountSizeUsd: cfg.accountSizeUsd,
+                pmccBudgetPct: cfg.pmccBudgetPct,
+                leapsDelta: cfg.pmccLeapsDelta,
+                leapsDteMin: cfg.pmccLeapsDteMin,
+                leapsDteMax: cfg.pmccLeapsDteMax,
+                shortDelta: cfg.targetDelta,
+                shortDteMin: cfg.shortDteMin,
+                shortDteMax: cfg.shortDteMax,
+                now,
+              });
+              const cashLeft = availableCash - runCashUsed;
+              // Skip candidates already holding a LEAPS (diagonal open under that symbol).
+              const top = screenerResult.ranked.find(
+                (c) => c.leapsDebitUsd <= cashLeft && wheelByUnderlying.get(c.symbol)?.state !== "pmcc_holding_leaps"
+              );
+              if (top) {
+                const debit = top.leapsDebitUsd; // real ask × 100, no extra slippage
+                await db.insert(ai_options_positions).values({
+                  user_id: userId,
+                  underlying: top.symbol,
+                  asset_class: "equity",
+                  strategy: "pmcc_leaps",
+                  side: "long",
+                  contract_symbol: `${top.symbol}-${top.leapsExpiry.toISOString().slice(2, 10).replace(/-/g, "")}C${top.leapsStrike}`,
+                  strike: top.leapsStrike.toFixed(4),
+                  expiry: top.leapsExpiry,
+                  opt_type: "C",
+                  contracts: 1,
+                  contract_multiplier: "100",
+                  entry_premium: top.leapsAsk.toFixed(4),
+                  entry_spot: top.spot.toFixed(4),
+                  collateral_usd: debit.toFixed(2),
+                  greeks: { delta: top.leapsDelta, gamma: 0, theta: 0, vega: 0, iv: top.leapsIV },
+                  council_verdict: verdict.verdict,
+                  council_confidence: verdict.confidence,
+                });
+                await db
+                  .insert(ai_options_wheel)
+                  .values({
+                    user_id: userId,
+                    underlying: top.symbol,
+                    state: "pmcc_holding_leaps",
+                    leaps_strike: top.leapsStrike.toFixed(4),
+                    leaps_expiry: top.leapsExpiry,
+                    leaps_net_debit: top.leapsAsk.toFixed(4),
+                    leaps_units: "100",
+                    leaps_contract_symbol: `${top.symbol}-C${top.leapsStrike}`,
+                    updated_at: now,
+                  })
+                  .onConflictDoUpdate({
+                    target: [ai_options_wheel.user_id, ai_options_wheel.underlying],
+                    set: {
+                      state: "pmcc_holding_leaps",
+                      leaps_strike: top.leapsStrike.toFixed(4),
+                      leaps_expiry: top.leapsExpiry,
+                      leaps_net_debit: top.leapsAsk.toFixed(4),
+                      leaps_units: "100",
+                      leaps_contract_symbol: `${top.symbol}-C${top.leapsStrike}`,
+                      updated_at: now,
+                    },
+                  });
+                runCashUsed += debit;
+                trace.pass("collateral", `screened ${top.symbol}: $${debit.toFixed(0)} debit (yield ${top.annualizedYieldPct.toFixed(0)}%/yr)`);
+                trace.pass("select_contract", `${top.symbol} ${top.leapsStrike}C ${top.leapsExpiry.toISOString().slice(0, 10)} Δ~${top.leapsDelta.toFixed(2)}`);
+                trace.pass("execute", `LEAPS bought via screener (real ask), debit $${debit.toFixed(2)}`);
+                await db.update(ai_options_orders).set({
+                  action: "open_leaps",
+                  detail: {
+                    screener: { picked: top.symbol, yield_pct: top.annualizedYieldPct, ranked: screenerResult.ranked.map((c) => ({ s: c.symbol, y: Math.round(c.annualizedYieldPct), d: Math.round(c.leapsDebitUsd) })), errors: screenerResult.errors },
+                    strike: top.leapsStrike,
+                    debit,
+                    gate_trace: trace.done(),
+                  },
+                }).where(eq(ai_options_orders.idempotency_key, idemKey));
+                outcomes.push({ underlying: top.symbol, status: "opened_long", detail: { via: "screener", forSlot: symbol, debit } });
+                continue;
+              }
+              trace.halt("collateral", `no affordable screened LEAPS (cash left $${cashLeft.toFixed(0)})`);
+              await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "no affordable screened LEAPS", screener_errors: screenerResult.errors, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+              outcomes.push({ underlying: symbol, status: "skipped", reason: "no affordable screened LEAPS" });
+              continue;
+            }
+
+            let leaps = selectLeaps(symbol, spot, sigma, cfg);
+            // Whole-contracts: the debit must also fit in remaining cash, not just the % budget.
+            if (leaps && cfg.wholeContracts && leaps.collateralUsd > availableCash - runCashUsed) leaps = null;
             if (!leaps) {
               trace.halt("collateral", `LEAPS debit > budget $${cfg.pmccBudgetUsd.toFixed(0)}`);
               await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "LEAPS over budget", gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
@@ -404,8 +538,12 @@ export async function runOptionsForUser(
           outcomes.push({ underlying: symbol, status: "skipped", reason: `SELL signal (conf ${verdict.confidence}) — skip CSP` });
         } else {
           trace.pass("conviction", `${verdict.verdict} ${verdict.confidence}% — ok to sell puts`);
-          const csp = selectCSP(symbol, spot, sigma, cfg);
-          if (openCollateral + csp.collateralUsd > maxCollateral) {
+          const csp = selectCSP(symbol, spot, sigma, cfg, now, availableCash);
+          if (!csp) {
+            trace.halt("collateral", `CSP collateral > available cash $${availableCash.toFixed(0)} (whole contracts)`);
+            await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "CSP unaffordable at account size", available_cash: availableCash, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+            outcomes.push({ underlying: symbol, status: "skipped", reason: "CSP unaffordable at account size" });
+          } else if (openCollateral + csp.collateralUsd > maxCollateral) {
             trace.halt("collateral", `$${(openCollateral + csp.collateralUsd).toFixed(0)} > cap $${maxCollateral.toFixed(0)}`);
             await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "collateral cap", gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
             outcomes.push({ underlying: symbol, status: "skipped", reason: "collateral cap reached" });
@@ -525,4 +663,372 @@ export async function runOptionsForUser(
   }
 
   return { ran: true, outcomes };
+}
+
+// ── Daily position management ─────────────────────────────────────────────────
+// PMCC income comes from actively harvesting the short leg, not riding to expiry:
+//   • profit-take shorts at profit_take_pct of max profit, immediately re-short
+//   • roll shorts when tested or at roll_dte
+//   • settle forced early assignment (deep-ITM short calls near dividends)
+//   • roll LEAPS below leaps_roll_dte (theta/gamma acceleration zone) and harvest
+//     deep-ITM LEAPS so capital recycles into fresh Δ80 leverage
+// No council calls — just spot + BS reprice, cheap enough to run every day.
+
+export type ManageOutcome = {
+  underlying: string;
+  action: "profit_take" | "roll" | "leaps_roll" | "deep_itm_harvest" | "assigned_early" | "reshort" | "skipped" | "failed";
+  detail?: Record<string, unknown>;
+};
+
+type OpenPosition = typeof ai_options_positions.$inferSelect;
+
+export async function manageOptionsPositionsForUser(userId: string): Promise<ManageOutcome[]> {
+  const settingsRows = await db
+    .select()
+    .from(ai_options_settings)
+    .where(eq(ai_options_settings.user_id, userId))
+    .limit(1);
+  const settings = settingsRows[0];
+  if (!settings || settings.kill_switch) return [];
+
+  const cfg = cfgFromSettings(settings);
+  const now = new Date();
+  const dateKey = now.toISOString().slice(0, 10);
+  const outcomes: ManageOutcome[] = [];
+  const slip = cfg.slippagePct / 100;
+  // Early close pays both legs' commissions (expiry settlement charges only the open).
+  const closeFees = (contracts: number) => cfg.commissionPerContract * contracts * 2;
+
+  const open = await db
+    .select()
+    .from(ai_options_positions)
+    .where(and(eq(ai_options_positions.user_id, userId), eq(ai_options_positions.status, "open")));
+  if (open.length === 0) return [];
+
+  const wheelRows = await db
+    .select()
+    .from(ai_options_wheel)
+    .where(eq(ai_options_wheel.user_id, userId));
+  const wheelByUnderlying = new Map(wheelRows.map((r) => [r.underlying, r]));
+
+  // One spot + sigma fetch per underlying.
+  const marketCache = new Map<string, { spot: number; sigma: number }>();
+  async function market(symbol: string, assetClass: string): Promise<{ spot: number; sigma: number } | null> {
+    const hit = marketCache.get(symbol);
+    if (hit) return hit;
+    const priceData = await getPrice(symbol, assetClass).catch(() => null);
+    if (!priceData?.price || priceData.price <= 0) return null;
+    const series = await getPriceHistory(symbol, 30).catch(() => null);
+    const sigma = histVol(series, assetClass === "crypto" ? 0.6 : 0.25);
+    const entry = { spot: priceData.price, sigma };
+    marketCache.set(symbol, entry);
+    return entry;
+  }
+
+  // Idempotency: one order row per (position, action, day). False → already done today.
+  async function claim(pos: OpenPosition, action: string, detail: Record<string, unknown>): Promise<boolean> {
+    const rows = await db
+      .insert(ai_options_orders)
+      .values({
+        user_id: userId,
+        underlying: pos.underlying,
+        action,
+        idempotency_key: `manage:${pos.id}:${action}:${dateKey}`,
+        detail,
+      })
+      .onConflictDoNothing({ target: ai_options_orders.idempotency_key })
+      .returning({ id: ai_options_orders.id });
+    return rows.length > 0;
+  }
+
+  // Close a short by buying it back at model price + slippage. Returns realized PnL.
+  async function closeShort(pos: OpenPosition, current: number, exitReason: string): Promise<number> {
+    const mult = parseFloat(pos.contract_multiplier) * pos.contracts;
+    const fill = current * (1 + slip);
+    const realized = parseFloat(pos.entry_premium) * mult - fill * mult - closeFees(pos.contracts);
+    await db
+      .update(ai_options_positions)
+      .set({
+        status: "closed",
+        realized_pnl: realized.toFixed(2),
+        exit_reason: exitReason,
+        exit_premium: fill.toFixed(4),
+        settled_at: now,
+      })
+      .where(eq(ai_options_positions.id, pos.id));
+    return realized;
+  }
+
+  // Sell a fresh pmcc_short against the wheel's LEAPS. Returns contract symbol or null.
+  async function reshort(pos: OpenPosition, spot: number, sigma: number): Promise<string | null> {
+    const wheel = wheelByUnderlying.get(pos.underlying);
+    if (wheel?.state !== "pmcc_holding_leaps") return null;
+    const leapsStrike = parseFloat(wheel.leaps_strike ?? "0");
+    const netDebit = parseFloat(wheel.leaps_net_debit ?? "0");
+    const leapsUnits = parseFloat(wheel.leaps_units ?? "0");
+    if (!leapsStrike || !leapsUnits) return null;
+    const short = selectPmccShort(pos.underlying, spot, leapsStrike, netDebit, leapsUnits, sigma, cfg, now);
+    // Floor invariant can force a strike so deep OTM the credit isn't worth the fees.
+    if (short.premiumTotal <= closeFees(1)) {
+      await setAlert(userId, `PMCC ${pos.underlying} — no worthwhile short credit above floor, staying uncovered`);
+      return null;
+    }
+    await db.insert(ai_options_positions).values({
+      user_id: userId,
+      underlying: pos.underlying,
+      asset_class: pos.asset_class,
+      strategy: "pmcc_short",
+      side: "short",
+      contract_symbol: short.contractSymbol,
+      strike: short.strike.toFixed(4),
+      expiry: short.expiry,
+      opt_type: "C",
+      contracts: 1,
+      contract_multiplier: short.multiplier.toFixed(8),
+      entry_premium: short.premium.toFixed(4),
+      entry_spot: spot.toFixed(4),
+      collateral_usd: "0",
+      greeks: short.greeks,
+    });
+    return short.contractSymbol;
+  }
+
+  const leapsPositions = open.filter((p) => p.strategy === "pmcc_leaps");
+  const shortPositions = open.filter((p) => ["csp", "cc", "pmcc_short"].includes(p.strategy));
+  // Underlyings whose LEAPS closed this run — their shorts are handled here, skip below.
+  const leapsClosedFor = new Set<string>();
+
+  // ── LEAPS lifecycle first: a roll/harvest closes the whole diagonal ─────────
+  for (const pos of leapsPositions) {
+    try {
+      const t = yearsTo(pos.expiry, now);
+      const dte = Math.round((pos.expiry.getTime() - now.getTime()) / 86_400_000);
+      if (dte <= 0) continue; // expiry settlement in the weekly run owns this
+      const mkt = await market(pos.underlying, pos.asset_class);
+      if (!mkt) continue;
+      const strike = parseFloat(pos.strike);
+      const mult = parseFloat(pos.contract_multiplier) * pos.contracts;
+      const entry = parseFloat(pos.entry_premium);
+      const current = bsPrice({ type: "C", S: mkt.spot, K: strike, t, r: cfg.riskFreeRate, sigma: mkt.sigma });
+      const greeks = bsGreeks({ type: "C", S: mkt.spot, K: strike, t, r: cfg.riskFreeRate, sigma: mkt.sigma });
+      const unrealized = (current - entry) * mult;
+
+      const shouldRoll = dte <= settings.leaps_roll_dte;
+      const shouldHarvest = greeks.delta >= 0.95 && unrealized >= 0.5 * entry * mult;
+      if (!shouldRoll && !shouldHarvest) continue;
+
+      const exitReason = shouldRoll ? "leaps_roll" : "deep_itm_harvest";
+      if (!(await claim(pos, exitReason, { dte, delta: greeks.delta, unrealized }))) continue;
+
+      // Close the accompanying short first — the diagonal unwinds as a unit.
+      const shortPos = shortPositions.find(
+        (p) => p.underlying === pos.underlying && p.strategy === "pmcc_short"
+      );
+      if (shortPos) {
+        const ts = yearsTo(shortPos.expiry, now);
+        const shortCur = bsPrice({
+          type: "C", S: mkt.spot, K: parseFloat(shortPos.strike), t: ts, r: cfg.riskFreeRate, sigma: mkt.sigma,
+        });
+        await closeShort(shortPos, shortCur, exitReason);
+      }
+
+      // Sell the LEAPS at model price − slippage.
+      const fill = current * (1 - slip);
+      const realized = fill * mult - entry * mult - closeFees(pos.contracts);
+      await db
+        .update(ai_options_positions)
+        .set({
+          status: "closed",
+          realized_pnl: realized.toFixed(2),
+          exit_reason: exitReason,
+          exit_premium: fill.toFixed(4),
+          settled_at: now,
+        })
+        .where(eq(ai_options_positions.id, pos.id));
+
+      // Reset the wheel — next weekly run buys a fresh Δ80 LEAPS (via screener when enabled).
+      await db
+        .update(ai_options_wheel)
+        .set({
+          state: "pmcc_cash",
+          leaps_strike: null,
+          leaps_expiry: null,
+          leaps_net_debit: null,
+          leaps_units: null,
+          leaps_contract_symbol: null,
+          updated_at: now,
+        })
+        .where(and(eq(ai_options_wheel.user_id, userId), eq(ai_options_wheel.underlying, pos.underlying)));
+
+      leapsClosedFor.add(pos.underlying);
+      outcomes.push({
+        underlying: pos.underlying,
+        action: exitReason as ManageOutcome["action"],
+        detail: { dte, delta: greeks.delta, realized, closedShort: shortPos?.contract_symbol ?? null },
+      });
+    } catch (err) {
+      outcomes.push({ underlying: pos.underlying, action: "failed", detail: { error: err instanceof Error ? err.message : "unknown" } });
+    }
+  }
+
+  // ── Short-leg management: assignment check → profit take → roll ─────────────
+  for (const pos of shortPositions) {
+    if (leapsClosedFor.has(pos.underlying)) continue;
+    try {
+      const t = yearsTo(pos.expiry, now);
+      const dte = Math.round((pos.expiry.getTime() - now.getTime()) / 86_400_000);
+      if (dte <= 0) continue; // expiry settlement owns it
+      const mkt = await market(pos.underlying, pos.asset_class);
+      if (!mkt) continue;
+      const strike = parseFloat(pos.strike);
+      const entry = parseFloat(pos.entry_premium);
+      const optType = pos.opt_type as OptType;
+      const current = bsPrice({ type: optType, S: mkt.spot, K: strike, t, r: cfg.riskFreeRate, sigma: mkt.sigma });
+
+      // 1. Early assignment: deep-ITM short call with no extrinsic left, near a
+      //    quarterly dividend month. Forced, not chosen — check first.
+      const isDivMonth = [3, 6, 9, 12].includes(now.getUTCMonth() + 1);
+      const intrinsic = optType === "C" ? Math.max(0, mkt.spot - strike) : Math.max(0, strike - mkt.spot);
+      const extrinsic = Math.max(0, current - intrinsic);
+      if (
+        optType === "C" &&
+        pos.asset_class !== "crypto" &&
+        isDivMonth &&
+        intrinsic > 0 &&
+        extrinsic < 0.05
+      ) {
+        if (!(await claim(pos, "assigned_early", { spot: mkt.spot, extrinsic }))) continue;
+        const wheel = wheelByUnderlying.get(pos.underlying);
+        const result = settle(
+          pos.strategy as "cc" | "pmcc_short",
+          strike,
+          entry,
+          mkt.spot,
+          pos.contracts,
+          parseFloat(pos.contract_multiplier),
+          wheel?.cost_basis != null ? parseFloat(wheel.cost_basis) : undefined,
+          cfg.wholeContracts ? cfg.commissionPerContract * pos.contracts : 0
+        );
+        await db
+          .update(ai_options_positions)
+          .set({
+            status: result.status,
+            realized_pnl: result.realizedPnl.toFixed(2),
+            exit_reason: "assigned_early",
+            settled_at: now,
+          })
+          .where(eq(ai_options_positions.id, pos.id));
+        if (pos.strategy === "cc") {
+          await db
+            .update(ai_options_wheel)
+            .set({ state: "cash", shares: "0", cost_basis: null, updated_at: now })
+            .where(and(eq(ai_options_wheel.user_id, userId), eq(ai_options_wheel.underlying, pos.underlying)));
+        }
+        outcomes.push({ underlying: pos.underlying, action: "assigned_early", detail: { pnl: result.realizedPnl } });
+        continue;
+      }
+
+      // 2. Profit take: buy back once profit_take_pct of max profit is captured,
+      //    then immediately re-short (pmcc_short only — the compounding engine).
+      if (current <= entry * (1 - cfg.profitTakePct / 100)) {
+        if (!(await claim(pos, "profit_take", { entry, current, dte }))) continue;
+        const realized = await closeShort(pos, current, "profit_take");
+        outcomes.push({ underlying: pos.underlying, action: "profit_take", detail: { realized, dte } });
+        if (pos.strategy === "pmcc_short") {
+          const sym = await reshort(pos, mkt.spot, mkt.sigma);
+          if (sym) outcomes.push({ underlying: pos.underlying, action: "reshort", detail: { contractSymbol: sym } });
+        }
+        continue;
+      }
+
+      // 3. Roll: tested (spot through the strike) or inside the gamma window.
+      const tested = optType === "C" ? mkt.spot > strike : mkt.spot < strike;
+      if (tested || dte <= cfg.rollDte) {
+        if (!(await claim(pos, "roll", { tested, dte, spot: mkt.spot, strike }))) continue;
+        const realized = await closeShort(pos, current, "roll");
+        outcomes.push({ underlying: pos.underlying, action: "roll", detail: { realized, tested, dte } });
+        if (pos.strategy === "pmcc_short") {
+          const sym = await reshort(pos, mkt.spot, mkt.sigma);
+          if (sym) outcomes.push({ underlying: pos.underlying, action: "reshort", detail: { contractSymbol: sym } });
+        }
+        // csp/cc: close only — the weekly run re-enters through the state machine.
+      }
+    } catch (err) {
+      outcomes.push({ underlying: pos.underlying, action: "failed", detail: { error: err instanceof Error ? err.message : "unknown" } });
+    }
+  }
+
+  // ── Cover uncovered LEAPS ────────────────────────────────────────────────────
+  // A LEAPS with no live short call is idle leverage — e.g. a screener buy from the
+  // weekly run, or a short that closed without a same-run replacement. Sell one.
+  const coveredNow = new Set(
+    (await db
+      .select({ underlying: ai_options_positions.underlying })
+      .from(ai_options_positions)
+      .where(
+        and(
+          eq(ai_options_positions.user_id, userId),
+          eq(ai_options_positions.status, "open"),
+          eq(ai_options_positions.strategy, "pmcc_short")
+        )
+      )).map((r) => r.underlying)
+  );
+  for (const wheel of wheelRows) {
+    if (wheel.state !== "pmcc_holding_leaps" || coveredNow.has(wheel.underlying)) continue;
+    if (leapsClosedFor.has(wheel.underlying)) continue;
+    try {
+      const assetClass = isCryptoUnderlying(wheel.underlying) ? "crypto" : "equity";
+      if (cfg.wholeContracts && assetClass === "crypto") continue;
+      const mkt = await market(wheel.underlying, assetClass);
+      if (!mkt) continue;
+      const leapsStrike = parseFloat(wheel.leaps_strike ?? "0");
+      const netDebit = parseFloat(wheel.leaps_net_debit ?? "0");
+      const leapsUnits = parseFloat(wheel.leaps_units ?? "0");
+      if (!leapsStrike || !leapsUnits) continue;
+      // Per-underlying-per-day idempotency for the cover action.
+      const rows = await db
+        .insert(ai_options_orders)
+        .values({
+          user_id: userId,
+          underlying: wheel.underlying,
+          action: "open_pmcc_short",
+          idempotency_key: `manage:cover:${wheel.underlying}:${dateKey}`,
+          detail: {},
+        })
+        .onConflictDoNothing({ target: ai_options_orders.idempotency_key })
+        .returning({ id: ai_options_orders.id });
+      if (rows.length === 0) continue;
+      const short = selectPmccShort(wheel.underlying, mkt.spot, leapsStrike, netDebit, leapsUnits, mkt.sigma, cfg, now);
+      if (short.premiumTotal <= closeFees(1)) {
+        await setAlert(userId, `PMCC ${wheel.underlying} — no worthwhile short credit above floor, staying uncovered`);
+        continue;
+      }
+      await db.insert(ai_options_positions).values({
+        user_id: userId,
+        underlying: wheel.underlying,
+        asset_class: assetClass,
+        strategy: "pmcc_short",
+        side: "short",
+        contract_symbol: short.contractSymbol,
+        strike: short.strike.toFixed(4),
+        expiry: short.expiry,
+        opt_type: "C",
+        contracts: 1,
+        contract_multiplier: short.multiplier.toFixed(8),
+        entry_premium: short.premium.toFixed(4),
+        entry_spot: mkt.spot.toFixed(4),
+        collateral_usd: "0",
+        greeks: short.greeks,
+      });
+      await db
+        .update(ai_options_orders)
+        .set({ detail: { symbol: short.contractSymbol, strike: short.strike, premium: short.premium, via: "cover_uncovered_leaps" } })
+        .where(eq(ai_options_orders.idempotency_key, `manage:cover:${wheel.underlying}:${dateKey}`));
+      outcomes.push({ underlying: wheel.underlying, action: "reshort", detail: { contractSymbol: short.contractSymbol, via: "cover" } });
+    } catch (err) {
+      outcomes.push({ underlying: wheel.underlying, action: "failed", detail: { error: err instanceof Error ? err.message : "unknown" } });
+    }
+  }
+
+  return outcomes;
 }

@@ -13,7 +13,7 @@ export type OptionCardRow = {
   spot: number | null;
   changePct: number | null;
   verdict: Verdict | null;
-  wheelState: "cash" | "holding_stock";
+  wheelState: "cash" | "holding_stock" | "pmcc_cash" | "pmcc_holding_leaps";
   shares: number;
   costBasis: number | null; // per share
   nextRun: Date | null;
@@ -25,6 +25,11 @@ export type OptionCardRow = {
   targetDelta: number;
   dteMin: number;
   dteMax: number;
+  // PMCC leverage read
+  deltaDollars: number;
+  thetaPerDay: number;
+  netDebit: number;
+  leapsDte: number | null;
 };
 
 export type OpenPosition = {
@@ -58,6 +63,8 @@ function strategyLabel(strategy: string): string {
     cc: "COVERED CALL",
     long_call: "LONG CALL",
     long_put: "LONG PUT",
+    pmcc_leaps: "PMCC LEAPS (LONG)",
+    pmcc_short: "PMCC SHORT CALL",
   };
   return map[strategy] ?? strategy.toUpperCase();
 }
@@ -72,38 +79,52 @@ function plainEnglish(pos: OpenPosition, underlying: string): string {
     return `Sold ${strike} call · collected ${prem}. If ${underlying} > ${strike} on ${exp}, shares called away at ${strike}.`;
   if (pos.strategy === "long_call")
     return `Bought ${strike} call · paid ${prem}. Profit if ${underlying} rises above ${strike} by ${exp}.`;
+  if (pos.strategy === "pmcc_leaps")
+    return `Bought deep-ITM ${strike} LEAPS call · paid ${prem}. Acts like owning ${underlying} at ~⅓ the capital; short calls are sold against it.`;
+  if (pos.strategy === "pmcc_short")
+    return `Sold ${strike} call against the LEAPS · collected ${prem}. Bought back at 60% profit or rolled at 21 DTE — daily managed.`;
   return `Bought ${strike} put · paid ${prem}. Profit if ${underlying} falls below ${strike} by ${exp}.`;
 }
 
 export function OptionCard({ row }: { row: OptionCardRow }) {
   const { underlying, spot, changePct, verdict, wheelState, shares, costBasis, nextRun,
     openPositions, totalPremiumIncome, totalRealizedPnl, collateralReserved,
-    targetDelta, dteMin, dteMax } = row;
+    targetDelta, dteMin, dteMax, deltaDollars, thetaPerDay, netDebit, leapsDte } = row;
 
   const [showExplain, setShowExplain] = useState(false);
   const conf = verdict?.confidence ?? 0;
   const verdictColor = vColor(verdict?.verdict);
+  const isPmcc = wheelState === "pmcc_cash" || wheelState === "pmcc_holding_leaps";
 
   // Wheel-aware directive (sell puts in cash, sell calls when holding).
-  const directive = verdict
+  // PMCC states are managed by their own daily loop — no wheel directive.
+  const directive = verdict && !isPmcc
     ? resolveDirective({
         verdict: verdict.verdict,
         confidence: verdict.confidence,
         tradeLevels: verdict.tradeLevels,
         currentPrice: spot,
-        position: { kind: "wheel", state: wheelState, shares, costBasisPerShare: costBasis },
+        position: { kind: "wheel", state: wheelState as "cash" | "holding_stock", shares, costBasisPerShare: costBasis },
         venue: "wheel",
       })
     : null;
 
-  const stateLabel = wheelState === "cash" ? "CASH · SELLING PUTS" : `HOLDING ${Math.round(shares)} · SELLING CALLS`;
-  const stateColor = wheelState === "cash" ? "#27f59b" : "#ffcf4a";
+  const stateLabel =
+    wheelState === "cash" ? "CASH · SELLING PUTS"
+    : wheelState === "holding_stock" ? `HOLDING ${Math.round(shares)} · SELLING CALLS`
+    : wheelState === "pmcc_cash" ? "PMCC · AWAITING LEAPS BUY"
+    : "PMCC · LEAPS + SHORT CALLS";
+  const stateColor = wheelState === "cash" || wheelState === "pmcc_cash" ? "#27f59b" : "#ffcf4a";
 
-  // Forward plan line — what the wheel intends next and the contract spec it will use.
+  // Forward plan line — what the machine intends next and the contract spec it will use.
   const planLine =
     wheelState === "cash"
       ? `STATE: CASH → NEXT: SELL PUT @ Δ${targetDelta}, ${dteMin}–${dteMax} DTE`
-      : `STATE: HOLDING ${Math.round(shares)} → NEXT: SELL CALL @ Δ${targetDelta}, ${dteMin}–${dteMax} DTE${costBasis != null ? ` above basis ${usd(costBasis, 2)}` : ""}`;
+    : wheelState === "holding_stock"
+      ? `STATE: HOLDING ${Math.round(shares)} → NEXT: SELL CALL @ Δ${targetDelta}, ${dteMin}–${dteMax} DTE${costBasis != null ? ` above basis ${usd(costBasis, 2)}` : ""}`
+    : wheelState === "pmcc_cash"
+      ? `STATE: PMCC CASH → NEXT: BUY Δ80 LEAPS, THEN SELL CALLS @ Δ${targetDelta} 30–45 DTE`
+      : `STATE: HOLDING LEAPS${leapsDte != null ? ` (${leapsDte}d left)` : ""} → SELLING CALLS @ Δ${targetDelta} 30–45 DTE · 60% PROFIT-TAKE · ROLL @ 21 DTE`;
 
   const premiumAtRisk = openPositions.reduce((s, p) => s + p.premiumTotal, 0);
 
@@ -164,9 +185,16 @@ export function OptionCard({ row }: { row: OptionCardRow }) {
             <DirectiveCard directive={directive} currency={verdict?.currency} variant="compact" />
           </div>
         )}
-        {verdict && (
+        {verdict && !isPmcc && (
           <div style={{ fontSize: 8.5, color: "#5b7d8a", fontStyle: "italic", marginTop: 5, lineHeight: 1.5 }}>
             {bandExplanation(verdict.confidence, wheelState === "cash" ? "wheel_cash" : "wheel_stock")}
+          </div>
+        )}
+        {isPmcc && (deltaDollars !== 0 || netDebit > 0) && (
+          <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 9, fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: "#8fb8c4" }}>Δ$ <span style={{ color: "#ffcf4a" }}>{usd(deltaDollars, 0)}</span></span>
+            <span style={{ color: "#8fb8c4" }}>θ/day <span style={{ color: thetaPerDay >= 0 ? "#27f59b" : "#ff5470" }}>{usd(thetaPerDay, 2)}</span></span>
+            <span style={{ color: "#8fb8c4" }}>DEBIT <span style={{ color: "#46e0f5" }}>{usd(netDebit, 0)}</span></span>
           </div>
         )}
       </div>

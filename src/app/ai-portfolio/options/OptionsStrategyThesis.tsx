@@ -6,7 +6,7 @@ export type UnderlyingThesis = {
   symbol: string;
   assetClass: string;
   spot: number | null;
-  wheelState: "cash" | "holding_stock";
+  wheelState: "cash" | "holding_stock" | "pmcc_cash" | "pmcc_holding_leaps";
   shares: number;
   costBasis: number | null;
   verdict: string | null;
@@ -43,11 +43,20 @@ const GATES: { n: string; label: string; detail: string }[] = [
   { n: "07", label: "COLLATERAL CAP", detail: "Every promise must be fully backed by cash. If a new trade would exceed your cash ceiling, it doesn't happen." },
   { n: "08", label: "LONG PLAY", detail: "Council very confident? Place a small side bet in that direction (capped budget, like a lottery ticket — lose at most the small premium paid)." },
   { n: "09", label: "ADVANCE +7D", detail: "Write everything down, set a reminder for next week. Done." },
+  { n: "10", label: "DAILY MANAGE", detail: "Every day (not just Mondays): buy back short calls once most of their value has decayed and immediately sell a fresh one (the PMCC compounding engine), roll shorts that get tested or drift under 21 DTE, and roll aging LEAPS before their time-decay accelerates (~100 DTE)." },
 ];
 
 /** Plain-English status of where this underlying sits in the wheel right now. */
 function statusSentence(u: UnderlyingThesis): string {
   const next = u.nextRun ? fmtDate(u.nextRun) : "soon";
+  if (u.wheelState === "pmcc_cash") {
+    if (u.verdict === "SELL")
+      return `PMCC slot in cash. Council says SELL — the bot will NOT buy a LEAPS on ${u.symbol} while it looks weak. Re-checks ${next}.`;
+    return `PMCC slot in cash: buys a deep-ITM LEAPS call as a leveraged stock substitute (~⅓ the capital of 100 shares), then sells calls against it. Next move ${next}.`;
+  }
+  if (u.wheelState === "pmcc_holding_leaps") {
+    return `Holding a LEAPS on ${u.symbol} — selling short calls against it and harvesting them daily at 60% profit. The diagonal's floor rule means an assigned short can't lock a structural loss.`;
+  }
   if (u.wheelState === "cash") {
     if (u.verdict === "SELL")
       return `Sitting in cash. Council says SELL — the bot will NOT promise to buy ${u.symbol} while it looks weak. Re-checks ${next}.`;

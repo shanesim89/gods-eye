@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { ai_options_settings, ai_trading_settings } from "@/db/schema";
 import { runScan, writeScanCache, writeHistory } from "@/lib/crypto/scanner";
-import { runOptionsForUser } from "@/lib/options/engine";
+import { manageOptionsPositionsForUser, runOptionsForUser } from "@/lib/options/engine";
 import { buildPortfolioDigest } from "@/lib/trading/portfolio-digest";
 import { sendTelegram } from "@/lib/telegram";
 
@@ -62,6 +62,28 @@ export async function GET(req: Request) {
     }
   } else {
     out.options = { ran: false, reason: "not Monday (UTC)" };
+  }
+
+  // ── Options position management (daily) ──────────────────────────────────
+  // Profit-takes / rolls short legs, rolls aging LEAPS. No council calls — cheap.
+  // Per-position-per-day idempotency, so a Monday double-fire is harmless.
+  try {
+    const armed = await db
+      .select({ user_id: ai_options_settings.user_id })
+      .from(ai_options_settings)
+      .where(eq(ai_options_settings.kill_switch, false));
+    const results: Record<string, unknown> = {};
+    for (const { user_id } of armed) {
+      try {
+        const actions = await manageOptionsPositionsForUser(user_id);
+        if (actions.length > 0) results[user_id] = actions;
+      } catch (err) {
+        results[user_id] = { error: err instanceof Error ? err.message : "unknown" };
+      }
+    }
+    out.options_manage = { ran: true, processed: armed.length, results };
+  } catch (err) {
+    out.options_manage = { ran: false, error: err instanceof Error ? err.message : "unknown" };
   }
 
   // ── Portfolio digest (Wednesdays only, UTC) ──────────────────────────────

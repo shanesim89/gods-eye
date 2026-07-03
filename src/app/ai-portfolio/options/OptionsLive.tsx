@@ -122,6 +122,27 @@ export function OptionsLive({ initial }: { initial: OptionsDashboardData }) {
         </div>
       </div>
 
+      {/* PMCC leverage strip */}
+      <div className="flex flex-wrap items-center gap-4 mb-4 border border-border bg-grid p-3 text-[12px] tabular-nums">
+        <div>
+          <span className="text-muted uppercase tracking-[1px] mr-2">ACCOUNT</span>
+          <span className="text-amber">{usd(state.accountSize, 0)}</span>
+          {state.wholeContracts && <span className="text-dim ml-1">· WHOLE CONTRACTS</span>}
+        </div>
+        <div>
+          <span className="text-muted uppercase tracking-[1px] mr-2">EFFECTIVE LEVERAGE</span>
+          <span className={state.effectiveLeverage > 3 ? "text-red" : "text-green"}>{state.effectiveLeverage.toFixed(2)}×</span>
+        </div>
+        <div>
+          <span className="text-muted uppercase tracking-[1px] mr-2">θ CAPTURE / DAY</span>
+          <span className={state.totalThetaPerDay >= 0 ? "text-green" : "text-red"}>{usd(state.totalThetaPerDay, 2)}</span>
+        </div>
+        <div>
+          <span className="text-muted uppercase tracking-[1px] mr-2">LEAPS BUDGET</span>
+          <span className="text-dim">{state.pmccBudgetPct}% OF ACCOUNT</span>
+        </div>
+      </div>
+
       {state.lastAlert && (
         <div className="border border-red/60 bg-red/5 text-red px-3 py-1.5 mb-4 text-[12px] tracking-[0.5px]">
           ⚠ {state.lastAlert}

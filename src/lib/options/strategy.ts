@@ -29,8 +29,25 @@ export type OptionsStrategyConfig = {
   pmccLeapsDelta: number;  // e.g. 80 → 0.80 deep-ITM
   pmccLeapsDteMin: number; // e.g. 180
   pmccLeapsDteMax: number; // e.g. 365
-  pmccBudgetUsd: number;   // max debit paid per LEAPS buy
+  pmccBudgetUsd: number;   // max debit paid per LEAPS buy (hard ceiling)
+  // ── Live-account realism ────────────────────────────────────────────────────
+  accountSizeUsd: number;      // total account the book must fit inside
+  wholeContracts: boolean;     // true → 1 contract = 100 units, no fractional multipliers
+  shortDteMin: number;         // PMCC short-leg DTE window (30-45), separate from CSP dte
+  shortDteMax: number;
+  pmccBudgetPct: number;       // LEAPS debit ≤ this % of account (whole-contracts mode)
+  profitTakePct: number;       // close short at this % of max profit
+  rollDte: number;             // roll/close short at this DTE
+  commissionPerContract: number; // $/contract, each open or close
+  slippagePct: number;         // % of premium: shorts receive less, longs pay more
 };
+
+// Fill model: model price is the mid; slippage haircuts the fill against us.
+// Short (selling): receive premium × (1 − s). Long (buying): pay premium × (1 + s).
+export function applySlippage(premium: number, side: "short" | "long", slippagePct: number): number {
+  const s = slippagePct / 100;
+  return side === "short" ? premium * (1 - s) : premium * (1 + s);
+}
 
 export type LegSelection = {
   optType: OptType;
@@ -87,10 +104,13 @@ function buildLeg(
   r: number,
   collateralUsd: number,
   multiplier: number,
-  now = new Date()
+  now = new Date(),
+  side?: "short" | "long",
+  slippagePct = 0
 ): LegSelection {
   const t = yearsTo(expiry, now);
-  const premium = bsPrice({ type: optType, S: spot, K: strike, t, r, sigma });
+  const mid = bsPrice({ type: optType, S: spot, K: strike, t, r, sigma });
+  const premium = side ? applySlippage(mid, side, slippagePct) : mid;
   const greeks = bsGreeks({ type: optType, S: spot, K: strike, t, r, sigma });
   const dte = Math.max(0, Math.round((expiry.getTime() - now.getTime()) / MS_DAY));
   return {
@@ -109,21 +129,27 @@ function buildLeg(
 
 // Cash-secured put: short put at ~targetDelta below spot.
 // Collateral fixed at collateralPerContractUsd; multiplier = collateral / strike.
+// Whole-contracts mode: multiplier = 100, collateral = strike × 100 (real cash-secured
+// sizing). Returns null when the collateral won't fit in availableCashUsd — that is
+// correct $10k-account realism (AAPL/SPY CSPs are simply unaffordable).
 export function selectCSP(
   underlying: string,
   spot: number,
   sigma: number,
   cfg: OptionsStrategyConfig,
-  now = new Date()
-): LegSelection {
+  now = new Date(),
+  availableCashUsd?: number
+): LegSelection | null {
   const expiry = expiryFriday(cfg.dteMin, cfg.dteMax, now);
   const t = yearsTo(expiry, now);
   const rawK = strikeForDelta(cfg.targetDelta / 100, "P", spot, t, cfg.riskFreeRate, sigma);
   let strike = roundStrike(Math.min(rawK, spot));
   // roundStrike can nudge back up to/above spot near ATM — re-clamp to keep the put OTM.
   if (strike >= spot) strike = roundStrike(spot * 0.99);
-  const multiplier = cfg.collateralPerContractUsd / strike;
-  return buildLeg(underlying, "P", strike, expiry, spot, sigma, cfg.riskFreeRate, cfg.collateralPerContractUsd, multiplier, now);
+  const multiplier = cfg.wholeContracts ? 100 : cfg.collateralPerContractUsd / strike;
+  const collateral = cfg.wholeContracts ? strike * 100 : cfg.collateralPerContractUsd;
+  if (cfg.wholeContracts && availableCashUsd != null && collateral > availableCashUsd) return null;
+  return buildLeg(underlying, "P", strike, expiry, spot, sigma, cfg.riskFreeRate, collateral, multiplier, now, "short", cfg.slippagePct);
 }
 
 // Covered call: short call at ~targetDelta above max(costBasis, spot).
@@ -145,7 +171,7 @@ export function selectCC(
   const floor = Math.max(costBasis, spot);
   const strike = roundStrike(Math.max(rawK, floor)); // keep OTM and ≥ cost basis
   const multiplier = heldUnits; // cover exactly the held units, not collateral/strike
-  return buildLeg(underlying, "C", strike, expiry, spot, sigma, cfg.riskFreeRate, 0, multiplier, now);
+  return buildLeg(underlying, "C", strike, expiry, spot, sigma, cfg.riskFreeRate, 0, multiplier, now, "short", cfg.slippagePct);
 }
 
 // Long play: buy directional option on high council conviction.
@@ -166,8 +192,8 @@ export function selectLongPlay(
   const t = yearsTo(expiry, now);
   const rawK = strikeForDelta(0.4, optType, spot, t, cfg.riskFreeRate, sigma);
   const strike = roundStrike(rawK);
-  const multiplier = cfg.collateralPerContractUsd / strike;
-  const leg = buildLeg(underlying, optType, strike, expiry, spot, sigma, cfg.riskFreeRate, 0, multiplier, now);
+  const multiplier = cfg.wholeContracts ? 100 : cfg.collateralPerContractUsd / strike;
+  const leg = buildLeg(underlying, optType, strike, expiry, spot, sigma, cfg.riskFreeRate, 0, multiplier, now, "long", cfg.slippagePct);
   if (leg.premiumTotal > cfg.longPlayBudgetUsd) return null;
   return leg;
 }
@@ -193,10 +219,15 @@ export function selectLeaps(
   // Deep ITM ⇒ strike below spot. Clamp just under spot if the solver nudges past it.
   let strike = roundStrike(Math.min(rawK, spot));
   if (strike >= spot) strike = roundStrike(spot * 0.99);
-  const multiplier = cfg.collateralPerContractUsd / strike;
-  // Debit paid is the capital at risk for the long leg.
-  const leg = buildLeg(underlying, "C", strike, expiry, spot, sigma, cfg.riskFreeRate, 0, multiplier, now);
-  if (leg.premiumTotal <= 0 || leg.premiumTotal > cfg.pmccBudgetUsd) return null;
+  const multiplier = cfg.wholeContracts ? 100 : cfg.collateralPerContractUsd / strike;
+  // Debit paid is the capital at risk for the long leg. Whole-contracts mode sizes
+  // the budget as a % of account (max leverage while keeping a cash reserve for rolls),
+  // still capped by the absolute pmccBudgetUsd ceiling.
+  const budget = cfg.wholeContracts
+    ? Math.min(cfg.accountSizeUsd * (cfg.pmccBudgetPct / 100), cfg.pmccBudgetUsd)
+    : cfg.pmccBudgetUsd;
+  const leg = buildLeg(underlying, "C", strike, expiry, spot, sigma, cfg.riskFreeRate, 0, multiplier, now, "long", cfg.slippagePct);
+  if (leg.premiumTotal <= 0 || leg.premiumTotal > budget) return null;
   // Record the debit as collateral so the position carries its capital footprint.
   return { ...leg, collateralUsd: leg.premiumTotal };
 }
@@ -215,12 +246,14 @@ export function selectPmccShort(
   cfg: OptionsStrategyConfig,
   now = new Date()
 ): LegSelection {
-  const expiry = expiryFriday(cfg.dteMin, cfg.dteMax, now);
+  // Short leg gets its own DTE window (30-45d standard PMCC practice — max theta
+  // capture per roll cycle), NOT the CSP window.
+  const expiry = expiryFriday(cfg.shortDteMin, cfg.shortDteMax, now);
   const t = yearsTo(expiry, now);
   const rawK = strikeForDelta(cfg.targetDelta / 100, "C", spot, t, cfg.riskFreeRate, sigma);
   const floor = Math.max(rawK, leapsStrike + netDebit, spot);
   const strike = roundStrike(floor);
-  return buildLeg(underlying, "C", strike, expiry, spot, sigma, cfg.riskFreeRate, 0, leapsUnits, now);
+  return buildLeg(underlying, "C", strike, expiry, spot, sigma, cfg.riskFreeRate, 0, leapsUnits, now, "short", cfg.slippagePct);
 }
 
 export type SettleResult = {
@@ -245,40 +278,42 @@ export function settle(
   spotAtExpiry: number,
   contracts: number,
   contractMultiplier: number, // stored value from ai_options_positions.contract_multiplier
-  costBasis?: number          // per-unit basis of held shares (required for cc settlement)
+  costBasis?: number,         // per-unit basis of held shares (required for cc settlement)
+  commissionUsd = 0           // total commissions on this position (open leg; expiry close is free)
 ): SettleResult {
   const mult = contractMultiplier * contracts;
   const credit = entryPremium * mult;
+  const fees = commissionUsd; // always a drag on PnL regardless of side
 
   // PMCC short call: covered by the LEAPS, no shares change hands. ITM short books
   // a capped loss (premium kept, minus intrinsic); the LEAPS gain offsets at its own
   // settlement. The wheel state stays holding-leaps either way (engine no-ops here).
   if (strategy === "pmcc_short") {
     if (spotAtExpiry > strike) {
-      return { status: "called_away", realizedPnl: credit - (spotAtExpiry - strike) * mult };
+      return { status: "called_away", realizedPnl: credit - (spotAtExpiry - strike) * mult - fees };
     }
-    return { status: "expired_worthless", realizedPnl: credit };
+    return { status: "expired_worthless", realizedPnl: credit - fees };
   }
 
   if (strategy === "csp") {
     if (spotAtExpiry < strike) {
       return {
         status: "assigned",
-        realizedPnl: credit,   // premium income only; basis is full strike
+        realizedPnl: credit - fees,   // premium income only; basis is full strike
         assignedUnits: mult,
         newCostBasis: strike,
       };
     }
-    return { status: "expired_worthless", realizedPnl: credit };
+    return { status: "expired_worthless", realizedPnl: credit - fees };
   }
 
   if (strategy === "cc") {
     if (spotAtExpiry > strike) {
       // Shares called away at strike: premium + capital gain vs cost basis.
       const capitalGain = costBasis != null ? (strike - costBasis) * mult : 0;
-      return { status: "called_away", realizedPnl: credit + capitalGain };
+      return { status: "called_away", realizedPnl: credit + capitalGain - fees };
     }
-    return { status: "expired_worthless", realizedPnl: credit };
+    return { status: "expired_worthless", realizedPnl: credit - fees };
   }
 
   // long options (incl. PMCC LEAPS, a long call): intrinsic at expiry − premium paid
@@ -286,5 +321,5 @@ export function settle(
   const intrinsic = isCall
     ? Math.max(0, spotAtExpiry - strike)
     : Math.max(0, strike - spotAtExpiry);
-  return { status: "closed", realizedPnl: intrinsic * mult - credit };
+  return { status: "closed", realizedPnl: intrinsic * mult - credit - fees };
 }
