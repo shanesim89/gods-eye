@@ -13,7 +13,7 @@ import { getPrice } from "@/lib/market";
 import { getOrCreateSettings } from "@/lib/trading/settings";
 import { getOrCreateOptionsSettings, type Underlying } from "@/lib/options/settings";
 
-export type ActivityTone = "buy" | "sell" | "skip" | "info";
+export type ActivityTone = "buy" | "sell" | "skip" | "info" | "error";
 export type ActivityRow = {
   ts: string;            // ISO
   label: string;         // short — "BTC BUY", "SPY open_csp", "XAUUSD LONG"
@@ -27,8 +27,11 @@ export type HoldingRow = {
   pnl?: number | null;   // USD P/L where meaningful
 };
 export type BotHealth = "ok" | "warn" | "halt" | "stale";
+export type BotKey =
+  | "crypto" | "options" | "quant" | "gold"
+  | "pdhl" | "pdhl4h" | "pdhl8h" | "dipbounce";
 export type BotStatus = {
-  key: "crypto" | "options" | "quant" | "gold" | "pdhl";
+  key: BotKey;
   label: string;
   href: string;
   mode: "LIVE" | "PAPER";
@@ -43,6 +46,8 @@ export type BotStatus = {
   holdings: HoldingRow[];
   recent: ActivityRow[];
   fallbackNote?: string;         // shown when recent is empty
+  openPositions?: number;        // live position count for the fleet row
+  alert?: string | null;         // urgent surface-on-homepage condition (e.g. failed live order)
 };
 
 const CRYPTO_TOKENS = ["BTC", "ETH", "SOL", "HYPE"] as const;
@@ -87,7 +92,9 @@ type PDHLPayload = {
 };
 
 async function cryptoStatus(userId: string): Promise<BotStatus> {
-  const since = new Date(Date.now() - DAY_MS);
+  // 48h window so a failed order from yesterday's cron still raises the alert
+  // (this is real money — silent failures must surface on the homepage).
+  const since = new Date(Date.now() - 2 * DAY_MS);
   const [settings, holdingRows, recentOrders] = await Promise.all([
     getOrCreateSettings(userId),
     db
@@ -145,9 +152,13 @@ async function cryptoStatus(userId: string): Promise<BotStatus> {
     detail:
       o.status === "filled"
         ? `$${parseFloat(o.usd_amount).toFixed(0)}${o.price ? ` @ $${Math.round(parseFloat(o.price)).toLocaleString("en-US")}` : ""}${o.boosted ? " · boosted" : ""}`
+        : o.status === "failed"
+        ? (o.error ?? "order failed")
         : (o.error ?? "skipped — not in buy-zone / cap / cadence"),
-    tone: o.status === "filled" ? "buy" : "skip",
+    tone: o.status === "filled" ? "buy" : o.status === "failed" ? "error" : "skip",
   }));
+
+  const lastFailed = recentOrders.find((o) => o.status === "failed");
 
   return {
     key: "crypto",
@@ -159,13 +170,26 @@ async function cryptoStatus(userId: string): Promise<BotStatus> {
     valueLabel: "Holdings",
     pnl,
     pnlPct,
-    health: settings.kill_switch ? "warn" : "ok",
-    healthNote: settings.kill_switch ? "kill switch ON — halted" : undefined,
+    health: settings.kill_switch ? "warn" : lastFailed ? "warn" : "ok",
+    healthNote: settings.kill_switch
+      ? "kill switch ON — halted"
+      : lastFailed
+      ? `last ${lastFailed.token} order FAILED`
+      : undefined,
     lastActivity: recentOrders[0]?.created_at.toISOString() ?? null,
     holdings,
     recent,
-    fallbackNote: recent.length === 0 ? "No DCA due in last 24h — waiting for next per-token cadence window." : undefined,
+    fallbackNote: recent.length === 0 ? "No DCA due in last 48h — waiting for next per-token cadence window." : undefined,
+    openPositions: holdings.length,
+    alert: lastFailed
+      ? `${lastFailed.token} buy FAILED ${rel48(lastFailed.created_at)} — ${(lastFailed.error ?? "unknown error").slice(0, 80)}`
+      : null,
   };
+}
+
+function rel48(d: Date): string {
+  const h = (Date.now() - d.getTime()) / 3_600_000;
+  return h < 1 ? `${Math.round(h * 60)}m ago` : h < 48 ? `${Math.round(h)}h ago` : `${Math.round(h / 24)}d ago`;
 }
 
 async function optionsStatus(userId: string): Promise<BotStatus> {
@@ -257,6 +281,7 @@ async function optionsStatus(userId: string): Promise<BotStatus> {
     holdings,
     recent,
     fallbackNote: recent.length === 0 ? "No action in last 24h — runs weekly (Mondays UTC). PMCC: buy LEAPS → sell short calls." : undefined,
+    openPositions: openPos.length,
   };
 }
 
@@ -312,6 +337,7 @@ async function quantStatus(): Promise<BotStatus> {
     holdings,
     recent,
     fallbackNote: recent.length === 0 ? `No rebalance crossed threshold recently${p.regime ? ` · regime ${p.regime}` : ""}.` : undefined,
+    openPositions: (p.top_positions ?? []).length,
   };
 }
 
@@ -373,11 +399,20 @@ async function goldStatus(): Promise<BotStatus> {
           ? "Open fade running — no closed trades in last 24h."
           : `FLAT — waiting for a ranging-session 3σ stretch${sess ? ` · today ${sess.trades} trades` : ""}.`
         : undefined,
+    openPositions: pos ? 1 : 0,
   };
 }
 
-async function pdhlStatus(): Promise<BotStatus> {
-  const row = await cacheStatus("gold:pdhl:state");
+// One PDHL status per period — daily/4H/8H bots publish to separate Neon keys.
+const PDHL_VARIANTS: Record<"pdhl" | "pdhl4h" | "pdhl8h", { cacheKey: string; label: string }> = {
+  pdhl:   { cacheKey: "gold:pdhl:state",     label: "PDH/PDL DAILY" },
+  pdhl4h: { cacheKey: "gold:pdhl:4h:state",  label: "PDH/PDL 4H" },
+  pdhl8h: { cacheKey: "gold:pdhl:8h:state",  label: "PDH/PDL 8H" },
+};
+
+async function pdhlStatus(variant: "pdhl" | "pdhl4h" | "pdhl8h" = "pdhl"): Promise<BotStatus> {
+  const { cacheKey, label } = PDHL_VARIANTS[variant];
+  const row = await cacheStatus(cacheKey);
   const p = (row?.payload as PDHLPayload) ?? {};
   const start = p.starting_balance ?? 10000;
   const equity = p.equity ?? start;
@@ -413,8 +448,8 @@ async function pdhlStatus(): Promise<BotStatus> {
 
   const sess = p.session;
   return {
-    key: "pdhl",
-    label: "PDH/PDL SCALPER",
+    key: variant,
+    label,
     href: "/ai-portfolio/pdhl-scalper",
     mode: "PAPER",
     asset: "XAUUSD",
@@ -433,6 +468,69 @@ async function pdhlStatus(): Promise<BotStatus> {
           ? "Break+retest trade open — no closed trades in last 24h."
           : `FLAT — waiting for PDH/PDL break+retest${sess ? ` · today ${sess.trades} trades` : ""}.`
         : undefined,
+    openPositions: pos ? 1 : 0,
+  };
+}
+
+// Dipbounce is signal-only (no capital) — surfaces the daily scan's top dip +
+// top leader so the fleet column shows it's alive and what it found.
+async function dipbounceStatus(): Promise<BotStatus> {
+  const { getDipResult } = await import("@/lib/stocks/dip-bounce");
+  const { getLeadersResult } = await import("@/lib/stocks/leaders");
+  const [dip, leaders] = await Promise.all([
+    getDipResult().catch(() => null),
+    getLeadersResult().catch(() => null),
+  ]);
+
+  const generated = dip?.generatedAt ?? null;
+  const ageH = generated ? (Date.now() - new Date(generated).getTime()) / 3_600_000 : Infinity;
+  let health: BotHealth = "ok";
+  let healthNote: string | undefined;
+  if (!dip) { health = "stale"; healthNote = "never published"; }
+  else if (ageH > 30) { health = "stale"; healthNote = `no scan in ${Math.round(ageH)}h`; }
+
+  const topDip = dip?.rows?.[0];
+  const topLeader = leaders?.rows?.[0];
+  const holdings: HoldingRow[] = [];
+  if (topDip) {
+    holdings.push({
+      label: topDip.symbol,
+      detail: `dip ${topDip.bounce_score.toFixed(0)} · ${topDip.drop_pct.toFixed(1)}% off high · RSI ${topDip.rsi.toFixed(0)}`,
+    });
+  }
+  if (topLeader) {
+    holdings.push({
+      label: topLeader.symbol,
+      detail: `leader ${topLeader.leader_score.toFixed(0)} · ${topLeader.tag}`,
+    });
+  }
+
+  const recent: ActivityRow[] = generated
+    ? [{
+        ts: generated,
+        label: "SCAN DONE",
+        detail: `${dip!.universe} tickers · ${dip!.passed} in dip zone${topDip ? ` · top ${topDip.symbol}(${topDip.bounce_score.toFixed(0)})` : ""}`,
+        tone: "info",
+      }]
+    : [];
+
+  return {
+    key: "dipbounce",
+    label: "DIPBOUNCE",
+    href: "/scanner",
+    mode: "PAPER",
+    asset: "US equities",
+    equityOrValue: 0,
+    valueLabel: "Signal only",
+    pnl: null,
+    pnlPct: null,
+    health,
+    healthNote,
+    lastActivity: generated,
+    holdings,
+    recent,
+    fallbackNote: recent.length === 0 ? "No scan published yet." : undefined,
+    openPositions: 0,
   };
 }
 
@@ -447,13 +545,85 @@ export async function getBotOverview(userId: string): Promise<BotStatus[]> {
   return [crypto, options, quant, gold, pdhl];
 }
 
-function errorStatus(key: BotStatus["key"], err: unknown): BotStatus {
-  const meta: Record<BotStatus["key"], { label: string; href: string; mode: "LIVE" | "PAPER"; asset: string }> = {
+// ── Homepage command-center aggregate ────────────────────────────────────────
+export type HomeActivityRow = ActivityRow & { bot: BotKey; botLabel: string };
+export type HomeState = {
+  live: BotStatus[];
+  paper: BotStatus[];
+  hero: {
+    totalBook: number;      // live holdings value + paper equities
+    todayPnl: number;       // sum of last-24h realized PnL visible in activity
+    ok: number; warn: number; halt: number; stale: number;
+  };
+  alerts: string[];         // urgent red-banner lines (bot alerts + health issues)
+  activity: HomeActivityRow[]; // merged 48h feed, newest first
+  generatedAt: string;
+};
+
+export async function buildHomeState(userId: string): Promise<HomeState> {
+  const [crypto, options, quant, gold, pdhl, pdhl4h, pdhl8h, dip] = await Promise.all([
+    cryptoStatus(userId).catch((e) => errorStatus("crypto", e)),
+    optionsStatus(userId).catch((e) => errorStatus("options", e)),
+    quantStatus().catch((e) => errorStatus("quant", e)),
+    goldStatus().catch((e) => errorStatus("gold", e)),
+    pdhlStatus("pdhl").catch((e) => errorStatus("pdhl", e)),
+    pdhlStatus("pdhl4h").catch((e) => errorStatus("pdhl4h", e)),
+    pdhlStatus("pdhl8h").catch((e) => errorStatus("pdhl8h", e)),
+    dipbounceStatus().catch((e) => errorStatus("dipbounce", e)),
+  ]);
+
+  const live = [crypto];
+  const paper = [gold, pdhl, pdhl4h, pdhl8h, quant, options, dip];
+  const all = [...live, ...paper];
+
+  const totalBook = all.reduce((s, b) => s + (Number.isFinite(b.equityOrValue) ? b.equityOrValue : 0), 0);
+
+  const cutoff = Date.now() - 2 * DAY_MS;
+  const activity: HomeActivityRow[] = all
+    .flatMap((b) => b.recent.map((r) => ({ ...r, bot: b.key, botLabel: b.label })))
+    .filter((r) => {
+      const t = new Date(r.ts).getTime();
+      return Number.isFinite(t) && t >= cutoff;
+    })
+    .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime())
+    .slice(0, 50);
+
+  // Today's P/L: paper bots report equity-vs-start; approximate the daily number
+  // from session pnl where present is bot-specific, so use the simple honest sum
+  // of each bot's pnl exposed today — crypto uses holdings pnl (all-time), so
+  // exclude it and label the tile PAPER P/L + live P/L separately in the UI.
+  const todayPnl = paper.reduce((s, b) => s + (b.pnl ?? 0), 0);
+
+  const counts = { ok: 0, warn: 0, halt: 0, stale: 0 };
+  for (const b of all) counts[b.health] += 1;
+
+  const alerts: string[] = [];
+  for (const b of all) {
+    if (b.alert) alerts.push(`${b.label}: ${b.alert}`);
+    else if (b.health === "halt") alerts.push(`${b.label}: ${b.healthNote ?? "halted"}`);
+    else if (b.health === "stale") alerts.push(`${b.label}: ${b.healthNote ?? "stale"}`);
+  }
+
+  return {
+    live,
+    paper,
+    hero: { totalBook, todayPnl, ...counts },
+    alerts,
+    activity,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function errorStatus(key: BotKey, err: unknown): BotStatus {
+  const meta: Record<BotKey, { label: string; href: string; mode: "LIVE" | "PAPER"; asset: string }> = {
     crypto: { label: "CRYPTO DCA", href: "/ai-portfolio/crypto", mode: "LIVE", asset: "BTC·ETH·SOL·HYPE" },
     options: { label: "OPTIONS WHEEL", href: "/ai-portfolio/options", mode: "PAPER", asset: "—" },
     quant: { label: "QUANT SCALPER", href: "/ai-portfolio/quant-scalper", mode: "PAPER", asset: "BTC·ETH·BNB +" },
     gold: { label: "GOLD SCALPER", href: "/ai-portfolio/gold-scalper", mode: "PAPER", asset: "XAUUSD" },
-    pdhl: { label: "PDH/PDL SCALPER", href: "/ai-portfolio/pdhl-scalper", mode: "PAPER", asset: "XAUUSD" },
+    pdhl: { label: "PDH/PDL DAILY", href: "/ai-portfolio/pdhl-scalper", mode: "PAPER", asset: "XAUUSD" },
+    pdhl4h: { label: "PDH/PDL 4H", href: "/ai-portfolio/pdhl-scalper", mode: "PAPER", asset: "XAUUSD" },
+    pdhl8h: { label: "PDH/PDL 8H", href: "/ai-portfolio/pdhl-scalper", mode: "PAPER", asset: "XAUUSD" },
+    dipbounce: { label: "DIPBOUNCE", href: "/scanner", mode: "PAPER", asset: "US equities" },
   };
   const m = meta[key];
   console.error(`[overview] ${key} failed:`, err instanceof Error ? err.message : err);

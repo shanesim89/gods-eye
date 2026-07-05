@@ -32,6 +32,7 @@ export const toneColor: Record<string, string> = {
   sell: "text-red",
   skip: "text-muted",
   info: "text-muted",
+  error: "text-red",
 };
 
 export const healthColor: Record<string, string> = {
