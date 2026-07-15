@@ -347,6 +347,11 @@ export const ai_options_positions = pgTable("ai_options_positions", {
   exit_premium: numeric("exit_premium", { precision: 18, scale: 4 }), // per-unit close price for early exits
   opened_at: timestamp("opened_at").defaultNow().notNull(),
   settled_at: timestamp("settled_at"),
+  // Set only for real broker fills (AlpacaBroker.placeOrder's brokerOrderId) —
+  // null means this position is simulated (paper, or the model/real-chain
+  // paths). account_sync reconciliation keys off this to know which DB rows
+  // should have a live counterpart at the broker.
+  broker_order_id: text("broker_order_id"),
 });
 
 // Audit log of every engine action. idempotency_key unique → no double-action per period.

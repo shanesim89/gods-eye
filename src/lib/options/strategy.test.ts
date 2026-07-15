@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applySlippage, selectLeaps, selectPmccShort, selectCSP, settle } from "./strategy";
+import { applySlippage, selectLeaps, selectPmccShort, selectCSP, selectCC, adjustCCDeltaForVerdict, settle } from "./strategy";
 import type { OptionsStrategyConfig } from "./strategy";
 
 // Fractional-mode base config with zero slippage/commission so the legacy
@@ -103,6 +103,38 @@ describe("regression — wheel CSP still works", () => {
   });
 });
 
+// Lever 2: council verdict previously only ever gated NEW CSP/LEAPS entries —
+// a covered call sold unconditionally at a fixed delta regardless of verdict.
+describe("adjustCCDeltaForVerdict — council now informs the CC strike too", () => {
+  it("HOLD, low confidence, or no verdict leaves the base delta unchanged", () => {
+    expect(adjustCCDeltaForVerdict(22, "HOLD", 99, 70)).toBe(22);
+    expect(adjustCCDeltaForVerdict(22, "SELL", 50, 70)).toBe(22); // confidence < threshold
+    expect(adjustCCDeltaForVerdict(22, undefined, undefined, 70)).toBe(22);
+  });
+
+  it("a high-confidence SELL tightens delta toward spot (raise call-away odds, de-risk faster)", () => {
+    expect(adjustCCDeltaForVerdict(22, "SELL", 90, 70)).toBe(37); // +15, clamped ≤50
+    expect(adjustCCDeltaForVerdict(45, "SELL", 90, 70)).toBe(50); // clamp
+  });
+
+  it("a high-confidence BUY loosens delta away from spot (less likely called away from a liked name)", () => {
+    expect(adjustCCDeltaForVerdict(22, "BUY", 90, 70)).toBe(14); // -8, clamped ≥8
+    expect(adjustCCDeltaForVerdict(10, "BUY", 90, 70)).toBe(8); // clamp
+  });
+});
+
+describe("selectCC — verdict changes the actual strike, not just the delta number", () => {
+  it("SELL produces a strike closer to spot than BUY under otherwise identical inputs", () => {
+    const spot = 600;
+    const costBasis = 500; // below spot so the floor isn't binding
+    const sellCC = selectCC("SPY", spot, costBasis, 1, 0.25, cfg, NOW, "SELL", 90);
+    const buyCC = selectCC("SPY", spot, costBasis, 1, 0.25, cfg, NOW, "BUY", 90);
+    const holdCC = selectCC("SPY", spot, costBasis, 1, 0.25, cfg, NOW, "HOLD", 90);
+    expect(sellCC.strike).toBeLessThan(holdCC.strike);
+    expect(buyCC.strike).toBeGreaterThan(holdCC.strike);
+  });
+});
+
 // ── Whole-contract (live-account realism) mode ────────────────────────────────
 const whole: OptionsStrategyConfig = { ...cfg, wholeContracts: true, slippagePct: 3, commissionPerContract: 0.65, pmccBudgetUsd: 1e9 };
 
@@ -136,6 +168,27 @@ describe("whole-contract mode", () => {
     const short = selectPmccShort("SOFI", 20, 14, 7, 100, 0.5, whole, NOW);
     expect(short.dte).toBeGreaterThanOrEqual(30);
     expect(short.dte).toBeLessThanOrEqual(45 + 7); // expiryFriday can overshoot to next Friday
+  });
+
+  // Lever 5: pmccBudgetUsd used to double as an absolute ceiling even in
+  // whole-contracts mode, where pmccBudgetPct is meant to be the only budget
+  // signal. Both defaulting to $10k/60% kept the ceiling a no-op today (60%
+  // of $10k = $6k, already under $10k) — but raising account_size_usd without
+  // also raising pmcc_budget_usd used to silently cap leverage below the
+  // intended 60% the moment accountSize × 0.6 exceeded the ceiling.
+  it("a larger account size scales the LEAPS budget with pmccBudgetPct, not silently capped by the (now-fractional-only) pmccBudgetUsd ceiling", () => {
+    // account_size_usd raised to $50k, pmcc_budget_usd left at its old $10k
+    // default — intended budget is 60% × $50k = $30k. Spot=1000 (a pricier,
+    // SPY-like underlying) prices the Δ80 LEAPS debit at ≈$15.2k: ABOVE the
+    // old $10k ceiling but WELL under the new $30k pct-budget. Before the
+    // lever-5 fix, `min($30k, $10k)`=$10k made this debit unaffordable
+    // (returns null); after the fix, budget=$30k and it's affordable — this
+    // is the exact scenario the old ceiling would have silently broken.
+    const bigAccount: OptionsStrategyConfig = { ...whole, accountSizeUsd: 50000, pmccBudgetUsd: 10000 };
+    const leaps = selectLeaps("TEST", 1000, 0.25, bigAccount, NOW);
+    expect(leaps).not.toBeNull();
+    expect(leaps!.collateralUsd).toBeGreaterThan(10000); // proves the old ceiling isn't binding anymore
+    expect(leaps!.collateralUsd).toBeLessThanOrEqual(50000 * 0.6); // still governed by the intended pct
   });
 });
 

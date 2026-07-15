@@ -152,6 +152,26 @@ export function selectCSP(
   return buildLeg(underlying, "P", strike, expiry, spot, sigma, cfg.riskFreeRate, collateral, multiplier, now, "short", cfg.slippagePct);
 }
 
+// Council-aware delta adjustment for covered calls — previously the council
+// verdict only ever gated NEW CSP/LEAPS entries (skip on a high-confidence
+// SELL); once shares are already held, a covered call sold unconditionally at
+// the same fixed delta regardless of verdict. A high-confidence SELL on a
+// name you're stuck holding should tighten the strike (closer to spot) to
+// raise the odds of being called away and de-risking faster; a high-
+// confidence BUY should loosen it (further OTM) so a name the council still
+// likes isn't given away cheaply. HOLD or low confidence: unchanged.
+export function adjustCCDeltaForVerdict(
+  baseDelta: number,
+  verdict: "BUY" | "HOLD" | "SELL" | undefined,
+  confidence: number | undefined,
+  convictionThreshold: number
+): number {
+  if (!verdict || confidence == null || confidence < convictionThreshold) return baseDelta;
+  if (verdict === "SELL") return Math.min(50, baseDelta + 15);
+  if (verdict === "BUY") return Math.max(8, baseDelta - 8);
+  return baseDelta;
+}
+
 // Covered call: short call at ~targetDelta above max(costBasis, spot).
 // Strike never below cost basis → avoids locking in a loss.
 // `heldUnits` = the actual share/unit count from the wheel (set at assignment). The
@@ -163,11 +183,14 @@ export function selectCC(
   heldUnits: number,
   sigma: number,
   cfg: OptionsStrategyConfig,
-  now = new Date()
+  now = new Date(),
+  verdict?: "BUY" | "HOLD" | "SELL",
+  confidence?: number
 ): LegSelection {
+  const effectiveDelta = adjustCCDeltaForVerdict(cfg.targetDelta, verdict, confidence, cfg.convictionThreshold);
   const expiry = expiryFriday(cfg.dteMin, cfg.dteMax, now);
   const t = yearsTo(expiry, now);
-  const rawK = strikeForDelta(cfg.targetDelta / 100, "C", spot, t, cfg.riskFreeRate, sigma);
+  const rawK = strikeForDelta(effectiveDelta / 100, "C", spot, t, cfg.riskFreeRate, sigma);
   const floor = Math.max(costBasis, spot);
   const strike = roundStrike(Math.max(rawK, floor)); // keep OTM and ≥ cost basis
   const multiplier = heldUnits; // cover exactly the held units, not collateral/strike
@@ -220,11 +243,18 @@ export function selectLeaps(
   let strike = roundStrike(Math.min(rawK, spot));
   if (strike >= spot) strike = roundStrike(spot * 0.99);
   const multiplier = cfg.wholeContracts ? 100 : cfg.collateralPerContractUsd / strike;
-  // Debit paid is the capital at risk for the long leg. Whole-contracts mode sizes
-  // the budget as a % of account (max leverage while keeping a cash reserve for rolls),
-  // still capped by the absolute pmccBudgetUsd ceiling.
+  // Debit paid is the capital at risk for the long leg. Whole-contracts mode
+  // sizes the budget purely as a % of account (max leverage while keeping a
+  // cash reserve for rolls) — NOT also capped by the absolute pmccBudgetUsd
+  // ceiling. That ceiling exists for fractional mode, where it's the only
+  // budget signal; in whole-contracts mode it's redundant by design and a
+  // landmine if account_size_usd is ever raised without also raising
+  // pmcc_budget_usd (e.g. both default $10k/60% → the $6k pct-budget is
+  // already under the $10k ceiling today, so it silently does nothing — until
+  // account_size_usd grows past pmcc_budget_usd/0.6, at which point the
+  // ceiling starts silently CAPPING leverage below the intended 60%).
   const budget = cfg.wholeContracts
-    ? Math.min(cfg.accountSizeUsd * (cfg.pmccBudgetPct / 100), cfg.pmccBudgetUsd)
+    ? cfg.accountSizeUsd * (cfg.pmccBudgetPct / 100)
     : cfg.pmccBudgetUsd;
   const leg = buildLeg(underlying, "C", strike, expiry, spot, sigma, cfg.riskFreeRate, 0, multiplier, now, "long", cfg.slippagePct);
   if (leg.premiumTotal <= 0 || leg.premiumTotal > budget) return null;

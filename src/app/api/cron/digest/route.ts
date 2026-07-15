@@ -14,6 +14,14 @@ export const maxDuration = 60;
 // budget. Runs the moonshot scanner every day; runs the options wheel only on
 // Mondays (UTC) to preserve its weekly cadence. Options engine has per-week
 // idempotency, so a Monday-only gate plus that guard prevents any double-run.
+//
+// Scheduled 14:00 UTC (vercel.json), not midnight — the options screener needs
+// live Yahoo bid/ask/OI on the watchlist, which read as $0/0 outside US market
+// hours (open 13:30 UTC). Verified 2026-07-06: every watchlist symbol's chain
+// had bid=ask=OI=0 despite real volume when probed at ~01:00 UTC. 14:00 UTC
+// gives the market 30min to populate quotes. This also nudges the Wednesday
+// portfolio-digest Telegram send from ~9am to ~10pm SGT — accepted tradeoff
+// to stay within the 2-cron Hobby limit (Shane confirmed).
 // Secured by CRON_SECRET (Vercel Cron sends it as Authorization: Bearer).
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
@@ -38,11 +46,16 @@ export async function GET(req: Request) {
     out.scanner = { ok: false, error: err instanceof Error ? err.message : "unknown" };
   }
 
-  // ── Options wheel (Mondays only, UTC) ────────────────────────────────────
+  // ── Options wheel (weekdays, UTC) ────────────────────────────────────────
+  // Per-week idempotency caps each underlying at ONE open per ISO week, so running
+  // the open-path every trading day is safe: Monday is the intended entry, but
+  // Tue–Fri act as automatic retries if Monday skipped on a transient failure
+  // (off-hours $0 quotes, feed hiccup, council error). Before this was Monday-only,
+  // a single bad Monday killed the strategy for the whole week (2026-07-06 incident).
   const utcDay = new Date().getUTCDay();
   const forceWednesday = new URL(req.url).searchParams.has("force_wednesday");
-  const isMonday = utcDay === 1;
-  if (isMonday) {
+  const isTradingDay = utcDay >= 1 && utcDay <= 5;
+  if (isTradingDay) {
     try {
       const armed = await db
         .select({ user_id: ai_options_settings.user_id })
@@ -61,7 +74,7 @@ export async function GET(req: Request) {
       out.options = { ran: false, error: err instanceof Error ? err.message : "unknown" };
     }
   } else {
-    out.options = { ran: false, reason: "not Monday (UTC)" };
+    out.options = { ran: false, reason: "weekend (UTC)" };
   }
 
   // ── Options position management (daily) ──────────────────────────────────

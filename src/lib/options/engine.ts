@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, lte, sql } from "drizzle-orm";
+import { and, eq, lte, sql, isNull } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
   ai_options_settings,
@@ -13,8 +13,14 @@ import { bsGreeks, bsPrice, histVol, yearsTo } from "./blackscholes";
 import type { OptType } from "./blackscholes";
 import { ivVsHv } from "./analytics";
 import { selectCSP, selectCC, selectLongPlay, selectLeaps, selectPmccShort, settle } from "./strategy";
-import type { OptionsStrategyConfig } from "./strategy";
-import { screenPmccCandidates, type ScreenerResult } from "./screener";
+import type { OptionsStrategyConfig, LegSelection } from "./strategy";
+import { screenPmccCandidates, isTransientScreenerResult, type ScreenerResult } from "./screener";
+import { fetchRealCSPQuote, fetchRealCCQuote, toLegSelection } from "./wheel-chain";
+import { fetchDeribitCSPQuote, fetchDeribitCCQuote } from "./deribit-chain";
+import { fetchAlpacaCSPQuote, fetchAlpacaCCQuote } from "./brokers/alpaca-chain";
+import { AlpacaBroker } from "./brokers/alpaca";
+import { syncLiveSettlements } from "./brokers/settle-live";
+import { flattenLiveNow } from "./brokers/kill-switch";
 import { isCryptoUnderlying } from "./symbol";
 import type { Underlying } from "./settings";
 import { newTrace, WHEEL_GATES } from "@/lib/trading/gates";
@@ -74,6 +80,18 @@ async function setAlert(userId: string, msg: string) {
     .where(eq(ai_options_settings.user_id, userId));
 }
 
+// Roll back this week's period_claim so a TRANSIENT failure (price-feed hiccup,
+// off-hours $0 quotes, council error) retries on the next daily run instead of
+// wedging the underlying for the whole ISO week. The claim is the weekly
+// idempotency mutex; deleting it lets the next run re-attempt. Terminal decisions
+// (opened, SELL-skip, genuinely over-budget) intentionally KEEP the claim so we
+// don't hammer the feed. No-op if the claim was never inserted.
+async function rollbackClaim(userId: string, idemKey: string) {
+  await db
+    .delete(ai_options_orders)
+    .where(and(eq(ai_options_orders.user_id, userId), eq(ai_options_orders.idempotency_key, idemKey)));
+}
+
 export async function runOptionsForUser(
   userId: string,
   opts: { force?: boolean } = {}
@@ -86,8 +104,26 @@ export async function runOptionsForUser(
   const settings = settingsRows[0];
   if (!settings) return { ran: false, reason: "no options settings", outcomes: [] };
 
-  // GUARDRAIL 1: kill-switch.
-  if (settings.kill_switch) return { ran: false, reason: "kill_switch active", outcomes: [] };
+  // GUARDRAIL 1: kill-switch. Also flattens any live state (cancel resting
+  // orders, buy_to_close any open live positions) — halting the cron alone
+  // isn't a real emergency stop if a live position is left running. Idempotent
+  // (see kill-switch.ts), so this is safe to hit on every tick while the
+  // switch stays on.
+  if (settings.kill_switch) {
+    const flattened = await flattenLiveNow(userId, {
+      wholeContracts: settings.whole_contracts,
+      commissionPerContract: parseFloat(settings.commission_per_contract),
+    }).catch(() => []);
+    return {
+      ran: false,
+      reason: "kill_switch active",
+      outcomes: flattened.map((f) =>
+        f.outcome === "closed"
+          ? { underlying: f.underlying, status: "settled" as const, detail: { source: "kill_switch", realizedPnl: f.realizedPnl } }
+          : { underlying: f.underlying, status: "skipped" as const, reason: `kill_switch flatten unresolved: ${f.reason}` }
+      ),
+    };
+  }
 
   const underlyings = (settings.underlyings as Underlying[]) ?? [];
   const now = new Date();
@@ -104,7 +140,22 @@ export async function runOptionsForUser(
     )
   );
 
-  // ── STEP 1: settle any expired open positions ──────────────────────────────
+  // ── STEP 0: settle LIVE positions using real broker events (assignment_handling
+  // milestone) — must run before STEP 1 so a just-assigned wheel state (e.g. CSP
+  // → holding_stock) is visible to the underlyings loop below. Checks ALL open
+  // live positions, not just expired ones, so early assignment isn't missed.
+  const liveSettlements = await syncLiveSettlements(userId, { wholeContracts: cfg.wholeContracts, commissionPerContract: cfg.commissionPerContract }).catch(() => []);
+  for (const s of liveSettlements) {
+    outcomes.push(
+      s.outcome === "unresolved"
+        ? { underlying: s.underlying, status: "skipped", reason: `live settlement unresolved (${s.strategy}): ${s.reason}` }
+        : { underlying: s.underlying, status: "settled", detail: { source: "live", strategy: s.strategy, outcome: s.outcome, realizedPnl: s.realizedPnl } }
+    );
+  }
+
+  // ── STEP 1: settle any expired open SIMULATED positions (spot-vs-strike guess —
+  // broker_order_id IS NULL excludes live positions, which STEP 0 already
+  // resolved from real broker truth above) ───────────────────────────────────
   const expired = await db
     .select()
     .from(ai_options_positions)
@@ -112,7 +163,8 @@ export async function runOptionsForUser(
       and(
         eq(ai_options_positions.user_id, userId),
         eq(ai_options_positions.status, "open"),
-        lte(ai_options_positions.expiry, now)
+        lte(ai_options_positions.expiry, now),
+        isNull(ai_options_positions.broker_order_id)
       )
     );
 
@@ -259,6 +311,8 @@ export async function runOptionsForUser(
 
   for (const und of underlyings) {
     const { symbol, class: assetClass } = und;
+    // Hoisted so the catch can roll the weekly claim back on a transient failure.
+    const idemKey = `${userId}:${symbol}:${weekKey(now)}`;
     // Per-underlying gate trace, merged into the period_claim order row's detail.
     const trace = newTrace(WHEEL_GATES).pass("kill_switch").pass("settle", "expired positions settled");
     try {
@@ -279,8 +333,6 @@ export async function runOptionsForUser(
       }
       trace.pass("due", opts.force ? "forced run" : undefined);
 
-      const idemKey = `${userId}:${symbol}:${weekKey(now)}`;
-
       // GUARDRAIL 3: idempotency.
       const claimed = await db
         .insert(ai_options_orders)
@@ -299,12 +351,22 @@ export async function runOptionsForUser(
       const priceData = await getPrice(symbol, assetClass).catch(() => null);
       const spot = priceData?.price;
       if (!spot || spot <= 0) {
+        // Transient (feed hiccup) — roll the claim back so the next run retries.
         trace.halt("council", "no price for underlying");
-        await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "no price", gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
-        outcomes.push({ underlying: symbol, status: "skipped", reason: "no price" });
+        await rollbackClaim(userId, idemKey);
+        outcomes.push({ underlying: symbol, status: "skipped", reason: "no price (transient — will retry)" });
         continue;
       }
       trace.pass("council", `${verdict.verdict} ${verdict.confidence}%`);
+
+      const mode = und.mode ?? "wheel";
+      const state = wheel?.state ?? (mode === "pmcc" ? "pmcc_cash" : "cash");
+      // Buying the LEAPS (pmcc_cash) is a debit purchase, not a premium sale — cheap
+      // IV is favorable there, not a reason to skip. The IVR filter below exists to
+      // stop selling premium (CSPs, covered calls) when IV is cheap; it must not
+      // gate the "buy a LEAPS" decision, and must not use this slot's own IV to
+      // gate the auto-select screener, which evaluates a different watchlist entirely.
+      const skipIvrGate = mode === "pmcc" && state === "pmcc_cash";
 
       const series = await getPriceHistory(symbol, 30).catch(() => null);
       const fallbackVol = assetClass === "crypto" ? 0.6 : 0.25;
@@ -312,23 +374,24 @@ export async function runOptionsForUser(
 
       // IVR proxy: compare 30-day HV vs 252-day HV band. Skip if IV appears cheap.
       const IVR_MIN = 40;
-      const series252 = await getPriceHistory(symbol, 252).catch(() => null);
-      const sigma252 = histVol(series252, fallbackVol);
-      if (sigma252 > 0) {
-        const ivrProxy = ivVsHv(sigma, sigma252);
-        if (ivrProxy.proxyPctile < IVR_MIN) {
-          trace.halt("ivr", `proxy ${ivrProxy.proxyPctile.toFixed(0)}% < ${IVR_MIN}% — cheap IV, skip`);
-          await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "IV too cheap", ivr_proxy: ivrProxy.proxyPctile, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
-          outcomes.push({ underlying: symbol, status: "skipped", reason: `IV proxy ${ivrProxy.proxyPctile.toFixed(0)}% < ${IVR_MIN}% — cheap IV` });
-          continue;
-        }
-        trace.pass("ivr", `proxy ${ivrProxy.proxyPctile.toFixed(0)}% ≥ ${IVR_MIN}%`);
+      if (skipIvrGate) {
+        trace.pass("ivr", "buying LEAPS (debit) — cheap IV is favorable, filter not applicable");
       } else {
-        trace.pass("ivr", "252d history unavailable — skipping filter");
+        const series252 = await getPriceHistory(symbol, 252).catch(() => null);
+        const sigma252 = histVol(series252, fallbackVol);
+        if (sigma252 > 0) {
+          const ivrProxy = ivVsHv(sigma, sigma252);
+          if (ivrProxy.proxyPctile < IVR_MIN) {
+            trace.halt("ivr", `proxy ${ivrProxy.proxyPctile.toFixed(0)}% < ${IVR_MIN}% — cheap IV, skip`);
+            await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "IV too cheap", ivr_proxy: ivrProxy.proxyPctile, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+            outcomes.push({ underlying: symbol, status: "skipped", reason: `IV proxy ${ivrProxy.proxyPctile.toFixed(0)}% < ${IVR_MIN}% — cheap IV` });
+            continue;
+          }
+          trace.pass("ivr", `proxy ${ivrProxy.proxyPctile.toFixed(0)}% ≥ ${IVR_MIN}%`);
+        } else {
+          trace.pass("ivr", "252d history unavailable — skipping filter");
+        }
       }
-
-      const mode = und.mode ?? "wheel";
-      const state = wheel?.state ?? (mode === "pmcc" ? "pmcc_cash" : "cash");
 
       // ── PMCC ACTION (diagonal) ────────────────────────────────────────────
       if (mode === "pmcc") {
@@ -463,9 +526,19 @@ export async function runOptionsForUser(
                 outcomes.push({ underlying: top.symbol, status: "opened_long", detail: { via: "screener", forSlot: symbol, debit } });
                 continue;
               }
-              trace.halt("collateral", `no affordable screened LEAPS (cash left $${cashLeft.toFixed(0)})`);
-              await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "no affordable screened LEAPS", screener_errors: screenerResult.errors, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
-              outcomes.push({ underlying: symbol, status: "skipped", reason: "no affordable screened LEAPS" });
+              // Distinguish a transient empty result (market closed → $0 quotes, or
+              // fetch errors) from a genuine "everything's unaffordable/illiquid"
+              // decision. Transient → roll the claim back and retry next run; the
+              // 07-06 dead-week bug was exactly this masquerading as terminal.
+              if (isTransientScreenerResult(screenerResult)) {
+                trace.halt("collateral", "screener transient (off-hours/feed) — will retry");
+                await rollbackClaim(userId, idemKey);
+                outcomes.push({ underlying: symbol, status: "skipped", reason: "screener transient (off-hours/feed) — will retry" });
+              } else {
+                trace.halt("collateral", `no affordable screened LEAPS (cash left $${cashLeft.toFixed(0)})`);
+                await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "no affordable screened LEAPS", screener_errors: screenerResult.errors, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+                outcomes.push({ underlying: symbol, status: "skipped", reason: "no affordable screened LEAPS" });
+              }
               continue;
             }
 
@@ -539,11 +612,79 @@ export async function runOptionsForUser(
           outcomes.push({ underlying: symbol, status: "skipped", reason: `SELL signal (conf ${verdict.confidence}) — skip CSP` });
         } else {
           trace.pass("conviction", `${verdict.verdict} ${verdict.confidence}% — ok to sell puts`);
-          const csp = selectCSP(symbol, spot, sigma, cfg, now, availableCash);
+          // Real-chain first (real bid + real liquidity — see wheel-chain.ts),
+          // falls back to the BS-off-HV model on any failure (no chain, thin
+          // OI, wide spread, market closed) so behavior never regresses vs
+          // the pre-existing path.
+          let cspSource: "live" | "real" | "model" = "model";
+          let csp: LegSelection | null = null;
+          let cspBrokerOrderId: string | null = null;
+          let liveAttemptFailed = false;
+          if (!settings.paper && assetClass !== "crypto") {
+            // Live path (ai_options_settings.paper === false — no UI exposes this
+            // toggle today, so this branch stays inert unless set directly in the
+            // DB). Real Alpaca quote + a real order fill. Deliberately does NOT
+            // fall through to the model/real(Yahoo) paths below on failure — a
+            // failed live attempt must skip the underlying this cycle, never
+            // silently paper-trade it under a live label.
+            const liveQuote = await fetchAlpacaCSPQuote(symbol, spot, sigma, cfg, now).catch(() => null);
+            if (liveQuote) {
+              const multiplier = cfg.wholeContracts ? 100 : cfg.collateralPerContractUsd / liveQuote.strike;
+              const collateralUsd = cfg.wholeContracts ? liveQuote.strike * 100 : cfg.collateralPerContractUsd;
+              if (!(cfg.wholeContracts && collateralUsd > availableCash)) {
+                const broker = new AlpacaBroker();
+                const order = await broker
+                  .placeOrder({ contractSymbol: liveQuote.contractSymbol, side: "sell_to_open", contracts: 1, limitPrice: liveQuote.bid })
+                  .catch(() => null);
+                if (order && order.status !== "filled") {
+                  // Didn't fill immediately (market closed, price moved) — don't leave
+                  // a resting live day-order unmanaged, clean it up before skipping.
+                  await broker.cancelOrder(order.brokerOrderId).catch(() => null);
+                }
+                if (order && order.status === "filled" && order.filledPrice != null) {
+                  csp = {
+                    optType: "P",
+                    strike: liveQuote.strike,
+                    expiry: liveQuote.expiry,
+                    dte: liveQuote.dte,
+                    premium: order.filledPrice,
+                    premiumTotal: order.filledPrice * multiplier,
+                    greeks: liveQuote.greeks,
+                    collateralUsd,
+                    multiplier,
+                    contractSymbol: liveQuote.contractSymbol,
+                  };
+                  cspSource = "live";
+                  cspBrokerOrderId = order.brokerOrderId;
+                }
+              }
+            }
+            if (!csp) liveAttemptFailed = true;
+          } else {
+            // Real-chain, source picked by asset class: Yahoo for equity/etf
+            // (unchanged), Deribit for crypto (deribit-chain.ts — only ever
+            // reachable in fractional mode, whole_contracts guardrail above
+            // already excludes crypto entirely when whole_contracts=true).
+            const real = assetClass === "crypto"
+              ? await fetchDeribitCSPQuote(symbol, spot, sigma, cfg, now).catch(() => null)
+              : await fetchRealCSPQuote(symbol, spot, sigma, cfg, now).catch(() => null);
+            if (real) {
+              const multiplier = cfg.wholeContracts ? 100 : cfg.collateralPerContractUsd / real.strike;
+              const collateralUsd = cfg.wholeContracts ? real.strike * 100 : cfg.collateralPerContractUsd;
+              if (!(cfg.wholeContracts && collateralUsd > availableCash)) {
+                csp = toLegSelection(symbol, "P", real, multiplier, collateralUsd);
+                cspSource = "real";
+              }
+            }
+          }
+          if (!csp && !liveAttemptFailed) csp = selectCSP(symbol, spot, sigma, cfg, now, availableCash);
           if (!csp) {
-            trace.halt("collateral", `CSP collateral > available cash $${availableCash.toFixed(0)} (whole contracts)`);
-            await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "CSP unaffordable at account size", available_cash: availableCash, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
-            outcomes.push({ underlying: symbol, status: "skipped", reason: "CSP unaffordable at account size" });
+            const reason = liveAttemptFailed
+              ? "live execution failed — no fillable Alpaca quote, unaffordable, or order not filled"
+              : "CSP unaffordable at account size";
+            trace.halt("collateral", reason);
+            await db.update(ai_options_orders).set({ action: "skip", detail: { reason, available_cash: availableCash, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+            outcomes.push({ underlying: symbol, status: "skipped", reason });
           } else if (openCollateral + csp.collateralUsd > maxCollateral) {
             trace.halt("collateral", `$${(openCollateral + csp.collateralUsd).toFixed(0)} > cap $${maxCollateral.toFixed(0)}`);
             await db.update(ai_options_orders).set({ action: "skip", detail: { reason: "collateral cap", gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
@@ -567,44 +708,112 @@ export async function runOptionsForUser(
               greeks: csp.greeks,
               council_verdict: verdict.verdict,
               council_confidence: verdict.confidence,
+              broker_order_id: cspBrokerOrderId,
             });
             trace.pass("collateral", `$${csp.collateralUsd.toFixed(0)} reserved`);
-            trace.pass("select_contract", `${csp.contractSymbol} Δ${csp.greeks.delta.toFixed(2)}`);
+            trace.pass("select_contract", `${csp.contractSymbol} Δ${csp.greeks.delta.toFixed(2)} (${cspSource === "live" ? "LIVE Alpaca fill" : cspSource === "real" ? "real chain" : "BS model"})`);
             trace.pass("execute", `CSP opened, premium $${csp.premiumTotal.toFixed(2)}`);
-            await db.update(ai_options_orders).set({ action: "open_csp", detail: { symbol: csp.contractSymbol, strike: csp.strike, premium: csp.premium, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
-            outcomes.push({ underlying: symbol, status: "opened_csp", detail: { contractSymbol: csp.contractSymbol, strike: csp.strike, premiumTotal: csp.premiumTotal, delta: csp.greeks.delta } });
+            await db.update(ai_options_orders).set({ action: "open_csp", detail: { symbol: csp.contractSymbol, strike: csp.strike, premium: csp.premium, source: cspSource, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+            outcomes.push({ underlying: symbol, status: "opened_csp", detail: { contractSymbol: csp.contractSymbol, strike: csp.strike, premiumTotal: csp.premiumTotal, delta: csp.greeks.delta, source: cspSource } });
           }
         }
       } else {
         // holding_stock → sell covered call against the exact held units.
         const costBasis = parseFloat(wheel?.cost_basis ?? "0");
         const heldUnits = parseFloat(wheel?.shares ?? "0");
-        const cc = selectCC(symbol, spot, costBasis, heldUnits, sigma, cfg);
-        await db.insert(ai_options_positions).values({
-          user_id: userId,
-          underlying: symbol,
-          asset_class: assetClass,
-          strategy: "cc",
-          side: "short",
-          contract_symbol: cc.contractSymbol,
-          strike: cc.strike.toFixed(4),
-          expiry: cc.expiry,
-          opt_type: "C",
-          contracts: 1,
-          contract_multiplier: cc.multiplier.toFixed(8),
-          entry_premium: cc.premium.toFixed(4),
-          entry_spot: spot.toFixed(4),
-          collateral_usd: "0",
-          greeks: cc.greeks,
-          council_verdict: verdict.verdict,
-          council_confidence: verdict.confidence,
-        });
-        trace.pass("conviction", `${verdict.verdict} ${verdict.confidence}%`);
-        trace.pass("collateral", "covered by held shares");
-        trace.pass("select_contract", `${cc.contractSymbol} Δ${cc.greeks.delta.toFixed(2)}`);
-        trace.pass("execute", `CC opened, premium $${cc.premiumTotal.toFixed(2)}`);
-        await db.update(ai_options_orders).set({ action: "open_cc", detail: { symbol: cc.contractSymbol, strike: cc.strike, premium: cc.premium, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
-        outcomes.push({ underlying: symbol, status: "opened_cc", detail: { contractSymbol: cc.contractSymbol, strike: cc.strike, premiumTotal: cc.premiumTotal } });
+        let ccSource: "live" | "real" | "model" = "model";
+        let cc: LegSelection | null = null;
+        let ccBrokerOrderId: string | null = null;
+        let liveCcFailed = false;
+        if (!settings.paper && assetClass !== "crypto") {
+          // Live path — see the matching CSP block above for why this never
+          // falls through to selectCC on failure.
+          const liveQuote = await fetchAlpacaCCQuote(
+            symbol, spot, costBasis, sigma, cfg, now,
+            verdict.verdict as "BUY" | "HOLD" | "SELL", verdict.confidence
+          ).catch(() => null);
+          if (liveQuote) {
+            const broker = new AlpacaBroker();
+            const order = await broker
+              .placeOrder({ contractSymbol: liveQuote.contractSymbol, side: "sell_to_open", contracts: 1, limitPrice: liveQuote.bid })
+              .catch(() => null);
+            if (order && order.status !== "filled") {
+              await broker.cancelOrder(order.brokerOrderId).catch(() => null);
+            }
+            if (order && order.status === "filled" && order.filledPrice != null) {
+              cc = {
+                optType: "C",
+                strike: liveQuote.strike,
+                expiry: liveQuote.expiry,
+                dte: liveQuote.dte,
+                premium: order.filledPrice,
+                premiumTotal: order.filledPrice * heldUnits,
+                greeks: liveQuote.greeks,
+                collateralUsd: 0,
+                multiplier: heldUnits,
+                contractSymbol: liveQuote.contractSymbol,
+              };
+              ccSource = "live";
+              ccBrokerOrderId = order.brokerOrderId;
+            }
+          }
+          if (!cc) liveCcFailed = true;
+        } else {
+          // Real-chain, source picked by asset class — see the matching CSP
+          // block above.
+          const real = assetClass === "crypto"
+            ? await fetchDeribitCCQuote(
+                symbol, spot, costBasis, sigma, cfg, now, undefined,
+                verdict.verdict as "BUY" | "HOLD" | "SELL", verdict.confidence
+              ).catch(() => null)
+            : await fetchRealCCQuote(
+                symbol, spot, costBasis, sigma, cfg, now, undefined,
+                verdict.verdict as "BUY" | "HOLD" | "SELL", verdict.confidence
+              ).catch(() => null);
+          if (real) {
+            cc = toLegSelection(symbol, "C", real, heldUnits, 0);
+            ccSource = "real";
+          }
+        }
+        if (!cc && !liveCcFailed) {
+          cc = selectCC(
+            symbol, spot, costBasis, heldUnits, sigma, cfg, now,
+            verdict.verdict as "BUY" | "HOLD" | "SELL", verdict.confidence
+          );
+        }
+        if (!cc) {
+          const reason = "live execution failed — no fillable Alpaca quote or order not filled";
+          trace.halt("execute", reason);
+          await db.update(ai_options_orders).set({ action: "skip", detail: { reason, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+          outcomes.push({ underlying: symbol, status: "skipped", reason });
+        } else {
+          await db.insert(ai_options_positions).values({
+            user_id: userId,
+            underlying: symbol,
+            asset_class: assetClass,
+            strategy: "cc",
+            side: "short",
+            contract_symbol: cc.contractSymbol,
+            strike: cc.strike.toFixed(4),
+            expiry: cc.expiry,
+            opt_type: "C",
+            contracts: 1,
+            contract_multiplier: cc.multiplier.toFixed(8),
+            entry_premium: cc.premium.toFixed(4),
+            entry_spot: spot.toFixed(4),
+            collateral_usd: "0",
+            greeks: cc.greeks,
+            council_verdict: verdict.verdict,
+            council_confidence: verdict.confidence,
+            broker_order_id: ccBrokerOrderId,
+          });
+          trace.pass("conviction", `${verdict.verdict} ${verdict.confidence}%`);
+          trace.pass("collateral", "covered by held shares");
+          trace.pass("select_contract", `${cc.contractSymbol} Δ${cc.greeks.delta.toFixed(2)} (${ccSource === "live" ? "LIVE Alpaca fill" : ccSource === "real" ? "real chain" : "BS model"})`);
+          trace.pass("execute", `CC opened, premium $${cc.premiumTotal.toFixed(2)}`);
+          await db.update(ai_options_orders).set({ action: "open_cc", detail: { symbol: cc.contractSymbol, strike: cc.strike, premium: cc.premium, source: ccSource, gate_trace: trace.done() } }).where(eq(ai_options_orders.idempotency_key, idemKey));
+          outcomes.push({ underlying: symbol, status: "opened_cc", detail: { contractSymbol: cc.contractSymbol, strike: cc.strike, premiumTotal: cc.premiumTotal, source: ccSource } });
+        }
       }
 
       // ── LONG PLAY (independent of wheel, additive) ────────────────────────
@@ -635,7 +844,17 @@ export async function runOptionsForUser(
               contract_multiplier: lp.multiplier.toFixed(8),
               entry_premium: lp.premium.toFixed(4),
               entry_spot: spot.toFixed(4),
-              collateral_usd: "0",
+              // Whole-contracts mode ("live-account realism"): record the real
+              // premium paid as collateral so `openCapital` (the aggregate that
+              // gates CSP/LEAPS affordability against availableCash) actually
+              // includes long-play spend on the NEXT run — previously long
+              // plays were invisible to that aggregate regardless of mode,
+              // meaning capital genuinely spent on them didn't reduce what
+              // subsequent CSP/LEAPS purchases thought was available. Left at
+              // "0" in fractional mode, where availableCash never gates
+              // anything anyway (see selectCSP/selectLeaps' wholeContracts-
+              // only affordability checks) — no behavioral difference there.
+              collateral_usd: cfg.wholeContracts ? lp.premiumTotal.toFixed(2) : "0",
               greeks: lp.greeks,
               council_verdict: verdict.verdict,
               council_confidence: verdict.confidence,
@@ -659,6 +878,9 @@ export async function runOptionsForUser(
     } catch (err) {
       const msg = err instanceof Error ? err.message : "unknown";
       await setAlert(userId, `OPTIONS ${symbol} FAILED — ${msg}`);
+      // An unhandled throw (council/network) is transient — roll the weekly claim
+      // back so the underlying retries next run rather than dying for the week.
+      await rollbackClaim(userId, idemKey);
       outcomes.push({ underlying: symbol, status: "failed", reason: msg });
     }
   }
@@ -888,15 +1110,24 @@ export async function manageOptionsPositionsForUser(userId: string): Promise<Man
 
       // 1. Early assignment: deep-ITM short call with no extrinsic left, near a
       //    quarterly dividend month. Forced, not chosen — check first.
+      //
+      // Threshold scales with spot (0.1% of spot), not a flat $0.05 — under
+      // Black-Scholes, an ITM call's extrinsic value has a hard floor of
+      // roughly strike × riskFreeRate × yearsToExpiry from interest-rate time
+      // value ALONE, independent of vol. For a $500 strike at 10 DTE that
+      // floor is already ≈$0.55 — a flat $0.05 threshold made this branch
+      // essentially unreachable for any strike above ~$50 at any DTE beyond
+      // ~1 day (found via engine.test.ts trying to exercise it, 2026-07-15).
       const isDivMonth = [3, 6, 9, 12].includes(now.getUTCMonth() + 1);
       const intrinsic = optType === "C" ? Math.max(0, mkt.spot - strike) : Math.max(0, strike - mkt.spot);
       const extrinsic = Math.max(0, current - intrinsic);
+      const extrinsicFloor = mkt.spot * 0.001;
       if (
         optType === "C" &&
         pos.asset_class !== "crypto" &&
         isDivMonth &&
         intrinsic > 0 &&
-        extrinsic < 0.05
+        extrinsic < extrinsicFloor
       ) {
         if (!(await claim(pos, "assigned_early", { spot: mkt.spot, extrinsic }))) continue;
         const wheel = wheelByUnderlying.get(pos.underlying);

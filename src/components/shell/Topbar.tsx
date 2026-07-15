@@ -10,6 +10,7 @@ const NAV = [
   { href: "/guru", label: "GURU", match: (p: string) => p.startsWith("/guru") },
   { href: "/ai-portfolio", label: "AI PORTFOLIO", match: (p: string) => p.startsWith("/ai-portfolio") },
   { href: "/scanner", label: "SCANNER", match: (p: string) => p.startsWith("/scanner") },
+  { href: "/market-outlook", label: "OUTLOOK", match: (p: string) => p.startsWith("/market-outlook") },
   { href: "/goals", label: "GOALS", match: (p: string) => p.startsWith("/goals") },
   { href: "/settings", label: "SETTINGS", match: (p: string) => p.startsWith("/settings") },
 ];

@@ -6,9 +6,11 @@ import type { StockCandles } from "./finnhub";
 import type { NormalizedChain, OptRow } from "./options/symbol";
 
 const CHART_BASE = "https://query1.finance.yahoo.com/v8/finance/chart";
-const SUMMARY_BASE = "https://query1.finance.yahoo.com/v10/finance/quoteSummary";
+const SUMMARY_BASE =
+  "https://query1.finance.yahoo.com/v10/finance/quoteSummary";
 const OPTIONS_BASE = "https://query1.finance.yahoo.com/v7/finance/options";
-const SUMMARY_MODULES = "summaryDetail,defaultKeyStatistics,financialData,assetProfile,recommendationTrend,calendarEvents,earnings";
+const SUMMARY_MODULES =
+  "summaryDetail,defaultKeyStatistics,financialData,assetProfile,recommendationTrend,calendarEvents,earnings";
 
 export type YahooData = {
   symbol: string;
@@ -56,7 +58,7 @@ function num(v: unknown): number | null {
 async function cached<T>(
   key: string,
   ttlMs: number,
-  fetcher: () => Promise<T | null>
+  fetcher: () => Promise<T | null>,
 ): Promise<T | null> {
   const rows = await db
     .select()
@@ -71,22 +73,41 @@ async function cached<T>(
   if (data != null) {
     await db
       .insert(market_data_cache)
-      .values({ ticker: key, payload: data as Record<string, unknown>, fetched_at: new Date() })
+      .values({
+        ticker: key,
+        payload: data as Record<string, unknown>,
+        fetched_at: new Date(),
+      })
       .onConflictDoUpdate({
         target: market_data_cache.ticker,
-        set: { payload: data as Record<string, unknown>, fetched_at: new Date() },
+        set: {
+          payload: data as Record<string, unknown>,
+          fetched_at: new Date(),
+        },
       });
   }
   return data;
 }
 
-async function fetchYahoo(symbol: string, days: number): Promise<YahooData | null> {
+async function fetchYahoo(
+  symbol: string,
+  days: number,
+): Promise<YahooData | null> {
   // Yahoo accepts range tokens; map days → nearest supported range
-  const range = days <= 5 ? "5d" : days <= 30 ? "1mo" : days <= 90 ? "3mo" : days <= 180 ? "6mo" : "1y";
+  const range =
+    days <= 5
+      ? "5d"
+      : days <= 30
+        ? "1mo"
+        : days <= 90
+          ? "3mo"
+          : days <= 180
+            ? "6mo"
+            : "1y";
   try {
     const r = await fetch(
       `${CHART_BASE}/${encodeURIComponent(symbol)}?range=${range}&interval=1d`,
-      { cache: "no-store", headers: { "User-Agent": "Mozilla/5.0" } }
+      { cache: "no-store", headers: { "User-Agent": "Mozilla/5.0" } },
     );
     if (!r.ok) return null;
     const j = (await r.json()) as YahooChartResponse;
@@ -97,7 +118,12 @@ async function fetchYahoo(symbol: string, days: number): Promise<YahooData | nul
     const ts = res.timestamp ?? [];
 
     // Build Finnhub-compatible candles, dropping null bars
-    const c: number[] = [], h: number[] = [], l: number[] = [], o: number[] = [], v: number[] = [], t: number[] = [];
+    const c: number[] = [],
+      h: number[] = [],
+      l: number[] = [],
+      o: number[] = [],
+      v: number[] = [],
+      t: number[] = [];
     for (let i = 0; i < ts.length; i++) {
       const close = q.close?.[i];
       if (close == null || !Number.isFinite(close)) continue;
@@ -108,17 +134,30 @@ async function fetchYahoo(symbol: string, days: number): Promise<YahooData | nul
       v.push(q.volume?.[i] ?? 0);
       t.push(ts[i]);
     }
-    const candles: StockCandles = { c, h, l, o, v, t, s: c.length ? "ok" : "no_data" };
+    const candles: StockCandles = {
+      c,
+      h,
+      l,
+      o,
+      v,
+      t,
+      s: c.length ? "ok" : "no_data",
+    };
 
-    const price = num(meta.regularMarketPrice) ?? (c.length ? c[c.length - 1] : 0);
+    const price =
+      num(meta.regularMarketPrice) ?? (c.length ? c[c.length - 1] : 0);
     const prevClose = num(meta.chartPreviousClose) ?? num(meta.previousClose);
-    const changePct = prevClose && prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
+    const changePct =
+      prevClose && prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
 
     return {
       symbol: String(meta.symbol ?? symbol),
       name: (meta.longName as string) ?? (meta.shortName as string) ?? null,
       currency: (meta.currency as string) ?? null,
-      exchange: (meta.fullExchangeName as string) ?? (meta.exchangeName as string) ?? null,
+      exchange:
+        (meta.fullExchangeName as string) ??
+        (meta.exchangeName as string) ??
+        null,
       price,
       prevClose,
       changePct,
@@ -136,12 +175,20 @@ async function fetchYahoo(symbol: string, days: number): Promise<YahooData | nul
 }
 
 /** Full Yahoo snapshot (price + 52w + candles) for a symbol. Cached 15min. */
-export async function getYahooData(symbol: string, days = 90): Promise<YahooData | null> {
-  return cached(`yh:${symbol}:${days}`, TTL_15MIN, () => fetchYahoo(symbol, days));
+export async function getYahooData(
+  symbol: string,
+  days = 90,
+): Promise<YahooData | null> {
+  return cached(`yh:${symbol}:${days}`, TTL_15MIN, () =>
+    fetchYahoo(symbol, days),
+  );
 }
 
 /** Finnhub-compatible candles via Yahoo. */
-export async function getYahooCandles(symbol: string, days = 90): Promise<StockCandles | null> {
+export async function getYahooCandles(
+  symbol: string,
+  days = 90,
+): Promise<StockCandles | null> {
   const d = await getYahooData(symbol, days);
   return d?.candles ?? null;
 }
@@ -160,7 +207,7 @@ export type YahooRecTrend = {
 };
 
 export type EpsQuarter = {
-  quarter: string;           // e.g. "3Q2024"
+  quarter: string; // e.g. "3Q2024"
   estimate: number | null;
   actual: number | null;
   surprisePct: number | null; // ((actual - estimate) / |estimate|) × 100
@@ -177,40 +224,40 @@ export type YahooSummary = {
   epsForward: number | null;
   beta: number | null;
   // EV multiples (new)
-  enterpriseValue: number | null;   // absolute $
+  enterpriseValue: number | null; // absolute $
   evToRevenue: number | null;
   evToEbitda: number | null;
   // Profitability / leverage
-  roe: number | null;               // percent
-  roa: number | null;               // percent
-  profitMargin: number | null;      // percent
-  operatingMargin: number | null;   // percent
-  grossMargins: number | null;      // percent (new)
-  ebitdaMargins: number | null;     // percent (new)
-  ebitda: number | null;            // absolute $ (new)
+  roe: number | null; // percent
+  roa: number | null; // percent
+  profitMargin: number | null; // percent
+  operatingMargin: number | null; // percent
+  grossMargins: number | null; // percent (new)
+  ebitdaMargins: number | null; // percent (new)
+  ebitda: number | null; // absolute $ (new)
   debtToEquity: number | null;
   currentRatio: number | null;
-  quickRatio: number | null;        // new
+  quickRatio: number | null; // new
   // Income / cashflow (new)
-  totalRevenue: number | null;      // absolute $
-  grossProfits: number | null;      // absolute $
-  freeCashflow: number | null;      // absolute $
+  totalRevenue: number | null; // absolute $
+  grossProfits: number | null; // absolute $
+  freeCashflow: number | null; // absolute $
   operatingCashflow: number | null; // absolute $
-  totalCash: number | null;         // absolute $
+  totalCash: number | null; // absolute $
   revenuePerShare: number | null;
   // Growth (new)
-  revenueGrowth: number | null;     // percent YoY
-  earningsGrowth: number | null;    // percent YoY
+  revenueGrowth: number | null; // percent YoY
+  earningsGrowth: number | null; // percent YoY
   // Ownership (new)
-  shortRatio: number | null;        // days to cover
+  shortRatio: number | null; // days to cover
   sharesOutstanding: number | null; // absolute
-  floatShares: number | null;       // absolute
-  heldByInsiders: number | null;    // percent
-  heldByInstitutions: number | null;// percent
+  floatShares: number | null; // absolute
+  heldByInsiders: number | null; // percent
+  heldByInstitutions: number | null; // percent
   // Dividends
-  dividendYield: number | null;     // percent
+  dividendYield: number | null; // percent
   dividendRate: number | null;
-  payoutRatio: number | null;       // percent
+  payoutRatio: number | null; // percent
   // Profile
   sector: string | null;
   industry: string | null;
@@ -220,21 +267,27 @@ export type YahooSummary = {
   targetHighPrice: number | null;
   targetLowPrice: number | null;
   numberOfAnalystOpinions: number | null;
-  recommendationMean: number | null;  // 1=Strong Buy ... 5=Sell
-  recommendationKey: string | null;   // "buy" | "hold" | ...
+  recommendationMean: number | null; // 1=Strong Buy ... 5=Sell
+  recommendationKey: string | null; // "buy" | "hold" | ...
   recommendationTrend: YahooRecTrend[] | null;
   // Earnings calendar (new)
-  nextEarningsDate: string | null;  // ISO date, e.g. "2025-07-30"
+  nextEarningsDate: string | null; // ISO date, e.g. "2025-07-30"
   nextEarningsDateIsEstimate: boolean;
-  epsHistory: EpsQuarter[] | null;  // last 4 quarters
+  epsHistory: EpsQuarter[] | null; // last 4 quarters
 };
 
-type RawValue = { raw?: number; fmt?: string } | number | string | null | undefined;
+type RawValue =
+  { raw?: number; fmt?: string } | number | string | null | undefined;
 
 function rawNum(v: RawValue): number | null {
   if (v == null) return null;
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
-  if (typeof v === "object" && "raw" in v && typeof v.raw === "number" && Number.isFinite(v.raw)) {
+  if (
+    typeof v === "object" &&
+    "raw" in v &&
+    typeof v.raw === "number" &&
+    Number.isFinite(v.raw)
+  ) {
     return v.raw;
   }
   return null;
@@ -274,7 +327,8 @@ type QuoteSummaryResponse = {
 
 // Yahoo's v10 quoteSummary now requires a cookie + crumb pair. We cache both
 // in-process; on 401 we refresh once and retry.
-let yahooSession: { cookie: string; crumb: string; fetchedAt: number } | null = null;
+let yahooSession: { cookie: string; crumb: string; fetchedAt: number } | null =
+  null;
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
 
 function parseCookieHeader(raw: string): string {
@@ -313,10 +367,13 @@ async function refreshYahooSession(): Promise<typeof yahooSession> {
       (await tryGetCookie("https://fc.yahoo.com")) ??
       (await tryGetCookie("https://finance.yahoo.com"));
     if (!cookie) return null;
-    const crumbRes = await fetch("https://query1.finance.yahoo.com/v1/test/getcrumb", {
-      headers: { "User-Agent": "Mozilla/5.0", Cookie: cookie },
-      cache: "no-store",
-    });
+    const crumbRes = await fetch(
+      "https://query1.finance.yahoo.com/v1/test/getcrumb",
+      {
+        headers: { "User-Agent": "Mozilla/5.0", Cookie: cookie },
+        cache: "no-store",
+      },
+    );
     if (!crumbRes.ok) return null;
     const crumb = (await crumbRes.text()).trim();
     if (!crumb || crumb.length > 64) return null;
@@ -338,13 +395,16 @@ async function fetchYahooSummary(symbol: string): Promise<YahooSummary | null> {
   try {
     let sess = await getYahooSession();
     if (!sess) return null;
-    const callOnce = async (s: { cookie: string; crumb: string }): Promise<Response> =>
+    const callOnce = async (s: {
+      cookie: string;
+      crumb: string;
+    }): Promise<Response> =>
       fetch(
         `${SUMMARY_BASE}/${encodeURIComponent(symbol)}?modules=${SUMMARY_MODULES}&crumb=${encodeURIComponent(s.crumb)}`,
         {
           cache: "no-store",
           headers: { "User-Agent": "Mozilla/5.0", Cookie: s.cookie },
-        }
+        },
       );
     let r = await callOnce(sess);
     if (r.status === 401 || r.status === 403) {
@@ -386,7 +446,8 @@ async function fetchYahooSummary(symbol: string): Promise<YahooSummary | null> {
     // Next earnings date from calendarEvents
     const earningsDateEntry = ce?.earnings?.earningsDate?.[0];
     const nextEarningsDate = earningsDateEntry?.fmt ?? null;
-    const nextEarningsDateIsEstimate = ce?.earnings?.isEarningsDateEstimate ?? true;
+    const nextEarningsDateIsEstimate =
+      ce?.earnings?.isEarningsDateEstimate ?? true;
 
     // EPS history from earnings chart (last 4 quarters)
     const epsQuarterly = er?.earningsChart?.quarterly ?? [];
@@ -470,8 +531,12 @@ async function fetchYahooSummary(symbol: string): Promise<YahooSummary | null> {
 }
 
 /** Keyless Yahoo quoteSummary snapshot. Cached 6h. */
-export async function getYahooSummary(symbol: string): Promise<YahooSummary | null> {
-  return cached(`yh:${symbol}:summary`, TTL_6HR, () => fetchYahooSummary(symbol));
+export async function getYahooSummary(
+  symbol: string,
+): Promise<YahooSummary | null> {
+  return cached(`yh:${symbol}:summary`, TTL_6HR, () =>
+    fetchYahooSummary(symbol),
+  );
 }
 
 // ── Options chain (v7/finance/options) ──────────────────────────────────────
@@ -526,9 +591,11 @@ function toOptRow(c: YahooOptContract): OptRow {
  * Pass expirationUnix (seconds) to select a specific expiry; otherwise Yahoo
  * returns its default (nearest) expiry plus the full list of expirationDates.
  */
+const OPTIONS_FETCH_TIMEOUT_MS = 8000;
+
 export async function getYahooOptions(
   symbol: string,
-  expirationUnix?: number
+  expirationUnix?: number,
 ): Promise<NormalizedChain | null> {
   try {
     let sess = await getYahooSession();
@@ -536,8 +603,15 @@ export async function getYahooOptions(
     const url = (s: { crumb: string }): string =>
       `${OPTIONS_BASE}/${encodeURIComponent(symbol)}?crumb=${encodeURIComponent(s.crumb)}` +
       (expirationUnix ? `&date=${expirationUnix}` : "");
-    const callOnce = (s: { cookie: string; crumb: string }): Promise<Response> =>
-      fetch(url(s), { cache: "no-store", headers: { "User-Agent": "Mozilla/5.0", Cookie: s.cookie } });
+    const callOnce = (s: {
+      cookie: string;
+      crumb: string;
+    }): Promise<Response> =>
+      fetch(url(s), {
+        cache: "no-store",
+        headers: { "User-Agent": "Mozilla/5.0", Cookie: s.cookie },
+        signal: AbortSignal.timeout(OPTIONS_FETCH_TIMEOUT_MS),
+      });
 
     let r = await callOnce(sess);
     if (r.status === 401 || r.status === 403) {
@@ -555,12 +629,18 @@ export async function getYahooOptions(
     if (!block) return null;
 
     const underlyingPrice = res.quote?.regularMarketPrice ?? 0;
-    const calls = (block.calls ?? []).map(toOptRow).sort((a, b) => a.strike - b.strike);
-    const puts = (block.puts ?? []).map(toOptRow).sort((a, b) => a.strike - b.strike);
+    const calls = (block.calls ?? [])
+      .map(toOptRow)
+      .sort((a, b) => a.strike - b.strike);
+    const puts = (block.puts ?? [])
+      .map(toOptRow)
+      .sort((a, b) => a.strike - b.strike);
     const strikes =
       res.strikes && res.strikes.length
         ? [...res.strikes].sort((a, b) => a - b)
-        : Array.from(new Set([...calls, ...puts].map((o) => o.strike))).sort((a, b) => a - b);
+        : Array.from(new Set([...calls, ...puts].map((o) => o.strike))).sort(
+            (a, b) => a - b,
+          );
 
     return {
       source: "yahoo",
@@ -583,7 +663,7 @@ export async function getYahooOptions(
  */
 export function mergeYahooSummaryAsFinancials(
   s: YahooSummary | null,
-  yh?: { week52High?: number | null; week52Low?: number | null } | null
+  yh?: { week52High?: number | null; week52Low?: number | null } | null,
 ): Record<string, number | undefined> | null {
   if (!s && !yh) return null;
   const out: Record<string, number | undefined> = {};
@@ -591,10 +671,12 @@ export function mergeYahooSummaryAsFinancials(
   if (s?.peTTM != null) out.peNormalizedAnnual = s.peTTM;
   if (s?.epsTTM != null) out.epsTTM = s.epsTTM;
   if (s?.beta != null) out.beta = s.beta;
-  if (s?.dividendYield != null) out.dividendYieldIndicatedAnnual = s.dividendYield;
+  if (s?.dividendYield != null)
+    out.dividendYieldIndicatedAnnual = s.dividendYield;
   if (s?.roe != null) out.roeTTM = s.roe;
   if (s?.profitMargin != null) out.netProfitMarginTTM = s.profitMargin;
-  if (s?.debtToEquity != null) out.totalDebt_totalEquityQuarterly = s.debtToEquity;
+  if (s?.debtToEquity != null)
+    out.totalDebt_totalEquityQuarterly = s.debtToEquity;
   if (yh?.week52High != null) out["52WeekHigh"] = yh.week52High;
   if (yh?.week52Low != null) out["52WeekLow"] = yh.week52Low;
   // New fields
@@ -615,6 +697,7 @@ export function mergeYahooSummaryAsFinancials(
   if (s?.earningsGrowth != null) out.earningsGrowthYoYPct = s.earningsGrowth;
   if (s?.shortRatio != null) out.shortRatio = s.shortRatio;
   if (s?.heldByInsiders != null) out.heldByInsidersPct = s.heldByInsiders;
-  if (s?.heldByInstitutions != null) out.heldByInstitutionsPct = s.heldByInstitutions;
+  if (s?.heldByInstitutions != null)
+    out.heldByInstitutionsPct = s.heldByInstitutions;
   return Object.keys(out).length ? out : null;
 }
