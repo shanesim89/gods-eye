@@ -189,6 +189,31 @@ export const scanner_watchlist = pgTable(
   })
 );
 
+// ─── Daily P/L snapshot (30-day calendar) ────────────────────────────────────
+
+// Durable per-(user, day, bot) realized-P/L + activity, one row per bot per day.
+// Absence of a row for a (day, bot) means "no data / no activity" — the calendar
+// renders those days as the highlighted no-activity state. realized_pnl null =
+// bot has no realized-P/L concept (crypto DCA). See drizzle/0010_daily_pnl.sql.
+export const daily_pnl = pgTable(
+  "daily_pnl",
+  {
+    user_id: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+    day: date("day").notNull(),
+    bot: text("bot").notNull(), // crypto|options|quant|gold|pdhl|pdhl4h|pdhl8h
+    realized_pnl: numeric("realized_pnl", { precision: 18, scale: 2 }),
+    return_pct: numeric("return_pct", { precision: 10, scale: 4 }),
+    activity_count: integer("activity_count").default(0).notNull(),
+    equity: numeric("equity", { precision: 18, scale: 2 }),
+    source: text("source").default("snapshot").notNull(), // 'snapshot' | 'backfill'
+    created_at: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.user_id, t.day, t.bot] }),
+    user_day_idx: index("daily_pnl_user_day_idx").on(t.user_id, t.day),
+  })
+);
+
 // ─── AI Portfolio: automated trading ─────────────────────────────────────────
 
 // One row per user. kill_switch defaults TRUE = HALTED until user explicitly arms.

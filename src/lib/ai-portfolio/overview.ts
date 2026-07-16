@@ -8,7 +8,9 @@ import {
   ai_options_wheel,
   ai_options_orders,
   market_data_cache,
+  daily_pnl,
 } from "@/db/schema";
+import { computeDailyRows } from "@/lib/trading/daily-snapshot";
 import { getPrice } from "@/lib/market";
 import { getOrCreateSettings } from "@/lib/trading/settings";
 import { getOrCreateOptionsSettings, type Underlying } from "@/lib/options/settings";
@@ -545,6 +547,92 @@ export async function getBotOverview(userId: string): Promise<BotStatus[]> {
   return [crypto, options, quant, gold, pdhl];
 }
 
+// ── 30-day P/L calendar ──────────────────────────────────────────────────────
+export type DailyBotCell = {
+  bot: BotKey;
+  label: string;
+  pnl: number | null;        // realized P/L that day; null = no data / no P/L concept (crypto)
+  returnPct: number | null;
+  activityCount: number;     // trades/orders that day
+};
+export type DailyCell = {
+  day: string;               // "YYYY-MM-DD" (UTC)
+  netPnl: number;            // sum of non-null bot pnl
+  active: boolean;           // any bot had activity that day
+  bots: DailyBotCell[];      // point-form per-bot breakdown (all bots, "—" where no data)
+};
+
+// Bots shown per day, stable order. dipbounce excluded — signal-only, no P/L.
+const CAL_BOTS: { key: BotKey; label: string }[] = [
+  { key: "gold", label: "GOLD SCALPER" },
+  { key: "pdhl", label: "PDH/PDL DAILY" },
+  { key: "pdhl4h", label: "PDH/PDL 4H" },
+  { key: "pdhl8h", label: "PDH/PDL 8H" },
+  { key: "quant", label: "QUANT SCALPER" },
+  { key: "options", label: "OPTIONS WHEEL" },
+  { key: "crypto", label: "CRYPTO DCA" },
+];
+
+export async function buildDailyCalendar(userId: string): Promise<DailyCell[]> {
+  const [dbRows, todayRows] = await Promise.all([
+    db
+      .select({
+        day: daily_pnl.day,
+        bot: daily_pnl.bot,
+        realized_pnl: daily_pnl.realized_pnl,
+        return_pct: daily_pnl.return_pct,
+        activity_count: daily_pnl.activity_count,
+      })
+      .from(daily_pnl)
+      .where(and(eq(daily_pnl.user_id, userId), gte(daily_pnl.day, sql`current_date - 29`))),
+    // Today isn't snapshotted yet (cron writes yesterday) — reconstruct live.
+    computeDailyRows(userId, new Date()).catch(() => []),
+  ]);
+
+  type Cell = { pnl: number | null; returnPct: number | null; activity: number };
+  const byDay = new Map<string, Map<string, Cell>>();
+  const put = (day: string, bot: string, c: Cell) => {
+    let m = byDay.get(day);
+    if (!m) { m = new Map(); byDay.set(day, m); }
+    m.set(bot, c);
+  };
+  for (const r of dbRows) {
+    put(r.day, r.bot, {
+      pnl: r.realized_pnl == null ? null : parseFloat(r.realized_pnl),
+      returnPct: r.return_pct == null ? null : parseFloat(r.return_pct),
+      activity: r.activity_count,
+    });
+  }
+  const todayStr = new Date().toISOString().slice(0, 10);
+  for (const r of todayRows) {
+    put(todayStr, r.bot, { pnl: r.realized_pnl, returnPct: r.return_pct, activity: r.activity_count });
+  }
+
+  const now = new Date();
+  const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const cells: DailyCell[] = [];
+  for (let i = 29; i >= 0; i--) {
+    const dayStr = new Date(todayUTC - i * DAY_MS).toISOString().slice(0, 10);
+    const m = byDay.get(dayStr);
+    const bots: DailyBotCell[] = CAL_BOTS.map((b) => {
+      const v = m?.get(b.key);
+      return {
+        bot: b.key,
+        label: b.label,
+        pnl: v?.pnl ?? null,
+        returnPct: v?.returnPct ?? null,
+        activityCount: v?.activity ?? 0,
+      };
+    });
+    const netPnl = bots.reduce((s, b) => s + (b.pnl ?? 0), 0);
+    // "Active" = any real data that day (a trade/order OR a realized P/L reading).
+    // Days with neither render as the highlighted "no activity / market closed" state.
+    const active = bots.some((b) => b.activityCount > 0 || b.pnl != null);
+    cells.push({ day: dayStr, netPnl, active, bots });
+  }
+  return cells;
+}
+
 // ── Homepage command-center aggregate ────────────────────────────────────────
 export type HomeActivityRow = ActivityRow & { bot: BotKey; botLabel: string };
 export type HomeState = {
@@ -557,10 +645,16 @@ export type HomeState = {
   };
   alerts: string[];         // urgent red-banner lines (bot alerts + health issues)
   activity: HomeActivityRow[]; // merged 48h feed, newest first
+  daily: DailyCell[];       // 30-day P/L calendar, oldest → newest
   generatedAt: string;
 };
 
 export async function buildHomeState(userId: string): Promise<HomeState> {
+  // Kick off the calendar query concurrently with the bot-status fan-out.
+  const dailyP = buildDailyCalendar(userId).catch((e) => {
+    console.error("[overview] daily calendar failed:", e instanceof Error ? e.message : e);
+    return [] as DailyCell[];
+  });
   const [crypto, options, quant, gold, pdhl, pdhl4h, pdhl8h, dip] = await Promise.all([
     cryptoStatus(userId).catch((e) => errorStatus("crypto", e)),
     optionsStatus(userId).catch((e) => errorStatus("options", e)),
@@ -604,12 +698,15 @@ export async function buildHomeState(userId: string): Promise<HomeState> {
     else if (b.health === "stale") alerts.push(`${b.label}: ${b.healthNote ?? "stale"}`);
   }
 
+  const daily = await dailyP;
+
   return {
     live,
     paper,
     hero: { totalBook, todayPnl, ...counts },
     alerts,
     activity,
+    daily,
     generatedAt: new Date().toISOString(),
   };
 }

@@ -2,9 +2,11 @@
 
 import type { HomeState } from "@/lib/ai-portfolio/overview";
 import { useLivePoll } from "@/app/ai-portfolio/_components/useLivePoll";
+import { Panel } from "@/components/ui/Panel";
 import { HeroStrip } from "./HeroStrip";
 import { LiveMoneyColumn } from "./LiveMoneyColumn";
 import { PaperFleetColumn } from "./PaperFleetColumn";
+import { ProfitCalendar } from "./ProfitCalendar";
 import { ActivityFeed } from "./ActivityFeed";
 
 /** Homepage command center — polls /api/home/state every 20s like bot pages. */
@@ -35,6 +37,12 @@ export function HomeLive({ initial }: { initial: HomeState }) {
       <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-4">
         <LiveMoneyColumn bots={state.live} />
         <PaperFleetColumn bots={state.paper} />
+      </div>
+
+      <div className="mt-4">
+        <Panel title="30-DAY P/L CALENDAR" meta="net daily · click a day for per-bot breakdown">
+          <ProfitCalendar daily={state.daily} />
+        </Panel>
       </div>
 
       <ActivityFeed rows={state.activity} />

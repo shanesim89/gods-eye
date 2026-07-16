@@ -4,6 +4,7 @@ import { ai_options_settings, ai_trading_settings } from "@/db/schema";
 import { runScan, writeScanCache, writeHistory } from "@/lib/crypto/scanner";
 import { manageOptionsPositionsForUser, runOptionsForUser } from "@/lib/options/engine";
 import { buildPortfolioDigest } from "@/lib/trading/portfolio-digest";
+import { writeDailySnapshot } from "@/lib/trading/daily-snapshot";
 import { sendTelegram } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
@@ -97,6 +98,28 @@ export async function GET(req: Request) {
     out.options_manage = { ran: true, processed: armed.length, results };
   } catch (err) {
     out.options_manage = { ran: false, error: err instanceof Error ? err.message : "unknown" };
+  }
+
+  // ── Daily P/L snapshot (every day) ───────────────────────────────────────
+  // Records yesterday's completed UTC day per bot into daily_pnl for the 30-day
+  // calendar. Runs at 14:00 UTC, so "yesterday" is a fully settled 24h window.
+  // Idempotent (PK upsert) — a double-fire just overwrites the same rows.
+  try {
+    const yesterday = new Date(Date.now() - 86_400_000);
+    const users = await db
+      .select({ user_id: ai_trading_settings.user_id })
+      .from(ai_trading_settings);
+    let written = 0;
+    for (const { user_id } of users) {
+      try {
+        written += await writeDailySnapshot(user_id, yesterday);
+      } catch (err) {
+        console.error(`[cron] daily-snapshot ${user_id} failed:`, err instanceof Error ? err.message : err);
+      }
+    }
+    out.daily_snapshot = { ran: true, users: users.length, rows: written };
+  } catch (err) {
+    out.daily_snapshot = { ran: false, error: err instanceof Error ? err.message : "unknown" };
   }
 
   // ── Portfolio digest (Wednesdays only, UTC) ──────────────────────────────
