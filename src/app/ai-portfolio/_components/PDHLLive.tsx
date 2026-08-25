@@ -45,11 +45,11 @@ export function PDHLLive({ initial, stateKey = "gold:pdhl:state" }: { initial: P
 
   return (
     <>
-      {/* Live badge */}
+      {/* Paper bot publication health */}
       <div className="flex items-center gap-2 mb-2 text-[14px]">
         <span className={`inline-flex items-center gap-1 ${stale ? "text-amber" : "text-green"}`}>
           <span className={`inline-block w-1.5 h-1.5 rounded-full ${stale ? "bg-amber" : "bg-green animate-pulse"}`} />
-          {stale ? "STALE" : "LIVE"}
+          {stale ? "STALE" : "PAPER ACTIVE"}
         </span>
         <span className="text-dim">
           {updatedAt ? `updated ${secsAgo}s ago` : "polling every 20s"}

@@ -57,7 +57,7 @@ export default async function QuantScrapPage() {
   return (
     <Panel
       title="QUANT SCALPER"
-      meta={`MULTI-SLEEVE RISK-PARITY ENSEMBLE · ${state.version ?? "v4"}`}
+      meta={`PAPER · MULTI-SLEEVE RISK-PARITY ENSEMBLE · ${state.version ?? "v4"}`}
     >
       <QuantLive initial={state} />
     </Panel>

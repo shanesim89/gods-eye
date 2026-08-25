@@ -72,8 +72,6 @@ for (let i = 0; i < qHist.length; i++) {
 const SCALPERS = [
   ["gold", "gold:scalper:state"],
   ["pdhl", "gold:pdhl:state"],
-  ["pdhl4h", "gold:pdhl:4h:state"],
-  ["pdhl8h", "gold:pdhl:8h:state"],
 ];
 for (const [bot, key] of SCALPERS) {
   const [row] = await sql`SELECT payload FROM market_data_cache WHERE ticker = ${key} LIMIT 1`;
@@ -96,7 +94,7 @@ for (const [bot, key] of SCALPERS) {
 
 // ── coverage summary ─────────────────────────────────────────────────────────
 console.log("backfill complete — day coverage per bot:");
-for (const bot of ["options", "crypto", "quant", "gold", "pdhl", "pdhl4h", "pdhl8h"]) {
+for (const bot of ["options", "crypto", "quant", "gold", "pdhl"]) {
   const days = coverage[bot] ? [...coverage[bot]].sort() : [];
   console.log(`  ${bot.padEnd(8)} ${String(days.length).padStart(2)} days` +
     (days.length ? ` (${days[0]} … ${days[days.length - 1]})` : " (none)"));

@@ -1,8 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import type { DailyCell } from "@/lib/ai-portfolio/overview";
-import { signedUsd, pct } from "@/components/ai-portfolio/format";
 
 // Background bucket for a day cell, by net P/L dollars. Mirrors CryptoHeatmap's
 // stepped green/red scale but keyed on signed $ (scalper P/L is small-dollar).
@@ -15,11 +13,15 @@ function cellBg(net: number): string {
   if (net < 100) return "#166534";
   return "#15803d";
 }
-function cellFg(net: number): string {
-  if (net < 0) return "#fca5a5";
-  if (net === 0) return "#8aa0b0";
-  return "#86efac";
+function fg(v: number): string {
+  return v > 0 ? "#86efac" : v < 0 ? "#fca5a5" : "#6b7f8f";
 }
+
+// Short 3-char tickers for the cramped per-bot lines inside each day box.
+const ABBR: Record<string, string> = {
+  gold: "GLD", pdhl: "PDH", pdhl4h: "P4H", pdhl8h: "P8H",
+  quant: "QNT", options: "OPT", crypto: "CRY",
+};
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 
@@ -34,16 +36,13 @@ function fullDate(day: string): string {
     weekday: "short", month: "short", day: "numeric", timeZone: "UTC",
   });
 }
+function fmt(v: number): string {
+  const abs = Math.abs(v);
+  const n = abs >= 1000 ? `${(abs / 1000).toFixed(1)}k` : Math.round(abs).toString();
+  return v > 0 ? `+${n}` : v < 0 ? `-${n}` : "0";
+}
 
 export function ProfitCalendar({ daily }: { daily: DailyCell[] }) {
-  const lastActive = useMemo(
-    () => [...daily].reverse().find((d) => d.active)?.day ?? daily.at(-1)?.day ?? null,
-    [daily],
-  );
-  const [selected, setSelected] = useState<string | null>(null);
-  const selDay = selected ?? lastActive;
-  const sel = daily.find((d) => d.day === selDay) ?? null;
-
   if (daily.length === 0) {
     return <div className="text-dim text-[11px] italic">No calendar data yet.</div>;
   }
@@ -53,90 +52,57 @@ export function ProfitCalendar({ daily }: { daily: DailyCell[] }) {
   return (
     <div>
       {/* legend */}
-      <div className="flex items-center gap-3 mb-2 text-[9px] text-dim uppercase tracking-[0.5px]">
-        <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5" style={{ background: "#15803d" }} /> profit</span>
-        <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5" style={{ background: "#991b1b" }} /> loss</span>
-        <span className="flex items-center gap-1">
-          <i className="inline-block w-2.5 h-2.5 border border-dashed border-border/60" style={{ backgroundImage: "repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(120,140,160,0.18) 2px, rgba(120,140,160,0.18) 3px)" }} />
-          no activity
-        </span>
+      <div className="flex items-center gap-4 mb-2 text-[11px] text-dim uppercase tracking-[0.5px]">
+        <span className="flex items-center gap-1.5"><i className="inline-block w-2.5 h-2.5" style={{ background: "#15803d" }} /> profit</span>
+        <span className="flex items-center gap-1.5"><i className="inline-block w-2.5 h-2.5" style={{ background: "#991b1b" }} /> loss</span>
+        <span className="flex items-center gap-1.5"><i className="inline-block w-2.5 h-2.5 border border-dashed border-border/60 bg-grid" /> no activity</span>
       </div>
 
       {/* weekday header */}
-      <div className="grid grid-cols-7 gap-1 mb-1">
+      <div className="grid grid-cols-7 gap-1.5 mb-1.5">
         {WEEKDAYS.map((w, i) => (
-          <div key={i} className="text-center text-[8px] text-dim uppercase tracking-[1px]">{w}</div>
+          <div key={i} className="text-center text-[10px] text-dim uppercase tracking-[1px]">{w}</div>
         ))}
       </div>
 
-      {/* day grid */}
-      <div className="grid grid-cols-7 gap-1">
+      {/* day grid — every cell lists every bot's daily P/L, $0 included */}
+      <div className="grid grid-cols-7 gap-1.5 overflow-x-auto">
         {Array.from({ length: leadPad }).map((_, i) => <div key={`pad-${i}`} />)}
         {daily.map((d) => {
-          const isSel = d.day === selDay;
-          const ring = isSel ? "outline outline-1 outline-cyan" : "";
-          if (!d.active) {
-            return (
-              <button
-                key={d.day}
-                onClick={() => setSelected(d.day)}
-                title={`${fullDate(d.day)} · no activity`}
-                className={`aspect-square flex items-start justify-end p-1 border border-dashed border-border/50 ${ring}`}
-                style={{ backgroundImage: "repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(120,140,160,0.12) 3px, rgba(120,140,160,0.12) 4px)" }}
-              >
-                <span className="text-[9px] text-dim tabular-nums leading-none">{dayNum(d.day)}</span>
-              </button>
-            );
-          }
+          const bg = d.active ? cellBg(d.netPnl) : "#14202e";
           return (
-            <button
+            <div
               key={d.day}
-              onClick={() => setSelected(d.day)}
-              title={`${fullDate(d.day)} · ${signedUsd(d.netPnl)}`}
-              className={`aspect-square flex flex-col justify-between p-1 border border-black/30 hover:opacity-80 transition-opacity ${ring}`}
-              style={{ background: cellBg(d.netPnl) }}
+              title={fullDate(d.day)}
+              className={`min-w-[92px] p-2 border ${d.active ? "border-black/30" : "border-dashed border-border/50"}`}
+              style={{
+                background: bg,
+                backgroundImage: d.active
+                  ? undefined
+                  : "repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(120,140,160,0.14) 4px, rgba(120,140,160,0.14) 5px)",
+              }}
             >
-              <span className="text-[9px] text-white/70 tabular-nums leading-none self-end">{dayNum(d.day)}</span>
-              <span className="text-[9px] font-bold tabular-nums leading-none" style={{ color: cellFg(d.netPnl) }}>
-                {d.netPnl >= 0 ? "+" : "−"}{Math.abs(d.netPnl) >= 1000 ? `${(Math.abs(d.netPnl) / 1000).toFixed(1)}k` : Math.round(Math.abs(d.netPnl))}
-              </span>
-            </button>
+              <div className="flex justify-between items-baseline leading-none mb-1.5 pb-1 border-b border-white/10">
+                <span className="text-[12px] text-white/70 tabular-nums font-medium">{dayNum(d.day)}</span>
+                <span className="text-[13px] font-bold tabular-nums" style={{ color: fg(d.netPnl) }}>
+                  {fmt(d.netPnl)}
+                </span>
+              </div>
+              <div className="flex flex-col gap-[3px]">
+                {d.bots.map((b) => {
+                  const v = b.pnl ?? 0;
+                  return (
+                    <div key={b.bot} className="flex justify-between leading-none text-[11px] tabular-nums">
+                      <span className="text-white/55 tracking-wide">{ABBR[b.bot]}</span>
+                      <span className="font-medium" style={{ color: fg(v) }}>{fmt(v)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           );
         })}
       </div>
-
-      {/* selected-day per-bot breakdown */}
-      {sel && (
-        <div className="mt-3 border border-border bg-grid p-2.5">
-          <div className="flex justify-between items-baseline mb-1.5 pb-1.5 border-b border-border/60">
-            <span className="text-[11px] text-cyan uppercase tracking-[1px]">{fullDate(sel.day)}</span>
-            <span className={`text-[12px] font-bold tabular-nums ${sel.netPnl > 0 ? "text-green" : sel.netPnl < 0 ? "text-red" : "text-dim"}`}>
-              {sel.active ? `${signedUsd(sel.netPnl)} net` : "no activity"}
-            </span>
-          </div>
-          <div className="flex flex-col gap-0.5">
-            {sel.bots.map((b) => {
-              const has = b.pnl != null || b.activityCount > 0;
-              return (
-                <div key={b.bot} className="flex justify-between items-baseline text-[10px]">
-                  <span className={has ? "text-muted" : "text-dim"}>{b.label}</span>
-                  <span className="tabular-nums flex gap-2">
-                    {b.pnl == null ? (
-                      <span className="text-dim">{b.activityCount > 0 ? `${b.activityCount} order${b.activityCount > 1 ? "s" : ""}` : "—"}</span>
-                    ) : (
-                      <>
-                        <span className={b.pnl > 0 ? "text-green" : b.pnl < 0 ? "text-red" : "text-dim"}>{signedUsd(b.pnl)}</span>
-                        {b.returnPct != null && <span className="text-dim w-12 text-right">{pct(b.returnPct)}</span>}
-                        {b.activityCount > 0 && <span className="text-dim w-14 text-right">{b.activityCount} trade{b.activityCount > 1 ? "s" : ""}</span>}
-                      </>
-                    )}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

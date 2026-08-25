@@ -22,7 +22,6 @@ const BOT_COLOR: Record<string, string> = {
   pdhl: "text-cyan",
   pdhl4h: "text-cyan",
   pdhl8h: "text-cyan",
-  dipbounce: "text-purple",
 };
 
 function matches(row: HomeActivityRow, f: Filter): boolean {

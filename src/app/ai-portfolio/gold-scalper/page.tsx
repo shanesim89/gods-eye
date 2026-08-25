@@ -56,7 +56,7 @@ export default async function GoldScalperPage() {
   }
 
   return (
-    <Panel title="GOLD PRINTING MACHINES" meta={`XAUUSD L/S SCALPER · ${state.version ?? "gold-v1"}`}>
+    <Panel title="GOLD PRINTING MACHINES" meta={`PAPER · XAUUSD L/S SCALPER · ${state.version ?? "gold-v1"}`}>
       <GoldLive initial={state} />
     </Panel>
   );

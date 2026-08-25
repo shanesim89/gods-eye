@@ -15,11 +15,27 @@ type InfraStatus = {
   generated_at: string;
 };
 
+type Dashboard = {
+  href: string | null;
+  label: string;
+  desc: string;
+  badge: "LIVE" | "PAPER" | "SOON";
+};
+
 function fmtUptime(sec: number): string {
   const d = Math.floor(sec / 86400);
   const h = Math.floor((sec % 86400) / 3600);
   const m = Math.floor((sec % 3600) / 60);
   return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function isBenchedService(name: string): boolean {
+  const normalized = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return (
+    (normalized.includes("pdhl4h") || normalized.includes("pdhl8h")) ||
+    ((normalized.includes("pdhpdl") || normalized.includes("pdhl")) &&
+      (normalized.includes("4h") || normalized.includes("8h")))
+  );
 }
 
 async function getInfraStatus(): Promise<{ status: InfraStatus | null; ageMin: number | null }> {
@@ -33,42 +49,56 @@ async function getInfraStatus(): Promise<{ status: InfraStatus | null; ageMin: n
   return { status: rows[0].payload as InfraStatus, ageMin };
 }
 
-const DASHBOARDS = [
+const DASHBOARDS: Dashboard[] = [
   {
     href: "/ai-portfolio/crypto",
     label: "CRYPTO",
-    desc: "BTC · ETH · SOL · HYPE — bi-weekly DCA + council buy-zone boost",
-    live: true,
+    desc: "BTC · ETH · SOL · HYPE — live bi-weekly DCA + council buy-zone boost.",
+    badge: "LIVE",
   },
-  { href: null, label: "ETF / UNIT TRUST", desc: "Coming soon", live: false },
-  { href: null, label: "STOCKS", desc: "Coming soon", live: false },
-  { href: "/ai-portfolio/options", label: "OPTIONS", desc: "The Wheel + council long plays — PAPER. Defined-risk income.", live: true },
+  { href: null, label: "ETF / UNIT TRUST", desc: "Coming soon", badge: "SOON" },
+  { href: null, label: "STOCKS", desc: "Coming soon", badge: "SOON" },
+  {
+    href: "/ai-portfolio/options",
+    label: "OPTIONS",
+    desc: "The Wheel + council long plays — paper trading. Defined-risk income.",
+    badge: "PAPER",
+  },
   {
     href: "/ai-portfolio/quant-scalper",
     label: "QUANT SCALPER",
-    desc: "Research-gated quant bot — TSMOM BTC/ETH/BNB. Gate ladder: research → backtest → paper → live.",
-    live: true,
+    desc: "Paper-forward research-gated quant bot — TSMOM BTC/ETH/BNB.",
+    badge: "PAPER",
   },
   {
     href: "/ai-portfolio/gold-scalper",
     label: "GOLD PRINTING MACHINES",
-    desc: "XAUUSD long+short 1m session-VWAP fade — PAPER. Self-tuning, regime + spread + Kronos gated.",
-    live: true,
+    desc: "XAUUSD long+short 1m session-VWAP fade — paper-forward and self-tuning.",
+    badge: "PAPER",
   },
   {
     href: "/ai-portfolio/pdhl-scalper",
     label: "PDH/PDL SCALPER",
-    desc: "XAUUSD long+short 1m PDH/PDL break+retest — PAPER. 2.5R fixed, walk-forward OOS Sharpe 5.0.",
-    live: true,
+    desc: "Daily break+retest is paper-active. 4H and 8H variants are OFF · BENCHED.",
+    badge: "PAPER",
   },
 ];
+
+const badgeClass: Record<Dashboard["badge"], string> = {
+  LIVE: "border-green/50 text-green",
+  PAPER: "border-amber/50 text-amber",
+  SOON: "border-border text-dim",
+};
 
 export default async function AiPortfolioPage() {
   await requireUser();
   const { status: infra, ageMin } = await getInfraStatus();
   const infraUp = infra != null && ageMin != null && ageMin < 10;
   const services = infra ? Object.entries(infra.services) : [];
-  const healthyCount = services.filter(([, ok]) => ok).length;
+  const benchedServices = services.filter(([name]) => isBenchedService(name));
+  const activeServices = services.filter(([name]) => !isBenchedService(name));
+  const healthyCount = activeServices.filter(([, ok]) => ok).length;
+  const downServices = activeServices.filter(([, ok]) => !ok);
 
   return (
     <Panel title="AI PORTFOLIO" meta="AUTOMATED TRADING">
@@ -88,14 +118,19 @@ export default async function AiPortfolioPage() {
               </span>
               <span className="text-muted">uptime {fmtUptime(infra.uptime_seconds)}</span>
               <span className="text-muted">
-                bots {healthyCount}/{services.length}
-                {healthyCount < services.length && (
+                bots {healthyCount}/{activeServices.length}
+                {downServices.length > 0 && (
                   <span className="text-red-400">
                     {" "}
-                    ({services.filter(([, ok]) => !ok).map(([name]) => name).join(", ")} down)
+                    ({downServices.map(([name]) => name).join(", ")} down)
                   </span>
                 )}
               </span>
+              {benchedServices.length > 0 && (
+                <span className="text-dim">
+                  {benchedServices.length} OFF · BENCHED
+                </span>
+              )}
               <span className="text-dim">checked {ageMin!.toFixed(1)}m ago</span>
             </>
           )}
@@ -116,22 +151,19 @@ export default async function AiPortfolioPage() {
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {DASHBOARDS.map((d) => {
+          const available = d.href != null;
           const inner = (
             <div
               className={`border bg-grid p-4 h-full transition-colors ${
-                d.live
-                  ? "border-amber/40 hover:border-amber"
-                  : "border-border opacity-50"
+                available ? "border-amber/40 hover:border-amber" : "border-border opacity-50"
               }`}
             >
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-amber font-bold tracking-[1px] text-[12px]">▸ {d.label}</span>
                 <span
-                  className={`text-[9px] uppercase tracking-[1px] px-1.5 py-0.5 border ${
-                    d.live ? "border-green/50 text-green" : "border-border text-dim"
-                  }`}
+                  className={`text-[9px] uppercase tracking-[1px] px-1.5 py-0.5 border ${badgeClass[d.badge]}`}
                 >
-                  {d.live ? "LIVE" : "SOON"}
+                  {d.badge}
                 </span>
               </div>
               <div className="text-muted text-[11px] leading-snug">{d.desc}</div>

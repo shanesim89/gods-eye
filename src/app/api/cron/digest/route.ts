@@ -5,6 +5,7 @@ import { runScan, writeScanCache, writeHistory } from "@/lib/crypto/scanner";
 import { manageOptionsPositionsForUser, runOptionsForUser } from "@/lib/options/engine";
 import { buildPortfolioDigest } from "@/lib/trading/portfolio-digest";
 import { writeDailySnapshot } from "@/lib/trading/daily-snapshot";
+import { deliverPortfolioDigests } from "@/lib/trading/telegram-delivery";
 import { sendTelegram } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
@@ -129,11 +130,11 @@ export async function GET(req: Request) {
       const users = await db
         .select({ user_id: ai_trading_settings.user_id })
         .from(ai_trading_settings);
-      for (const { user_id } of users) {
-        const msg = await buildPortfolioDigest(user_id);
-        if (msg) await sendTelegram(msg);
-      }
-      out.portfolio_digest = { ran: true, users: users.length };
+      out.portfolio_digest = await deliverPortfolioDigests(
+        users,
+        buildPortfolioDigest,
+        sendTelegram,
+      );
     } catch (err) {
       out.portfolio_digest = { ran: false, error: err instanceof Error ? err.message : "unknown" };
     }

@@ -32,8 +32,6 @@ type Row = {
 const SCALPERS: { bot: string; key: string }[] = [
   { bot: "gold", key: "gold:scalper:state" },
   { bot: "pdhl", key: "gold:pdhl:state" },
-  { bot: "pdhl4h", key: "gold:pdhl:4h:state" },
-  { bot: "pdhl8h", key: "gold:pdhl:8h:state" },
 ];
 
 async function cachePayload<T>(key: string): Promise<T | null> {
