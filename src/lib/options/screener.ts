@@ -69,13 +69,28 @@ function pickLeapsRow(
   );
 }
 
-// OTM call nearest the target short delta (Δ~22 ≈ strike ~5-8% above spot at 30-45d).
+// OTM call nearest the target short delta (Δ~22 ≈ strike ~5-8% above spot at 30-45d),
+// constrained to strikes at or above `minStrike` (the LEAPS breakeven floor).
+//
+// The floor matters: selling a call below leapsStrike + leapsAsk books a
+// guaranteed loss on the diagonal if it's assigned. This used to be enforced as
+// an outright REJECTION after picking the naive Δ-target strike, which threw
+// away most of the watchlist — a Δ80 LEAPS' breakeven sits ~9-20% above spot
+// (it's ITM, so its extrinsic is large), while a Δ22 short is only ~7% OTM, so
+// the naive pick lands under the floor for the majority of underlyings.
+// Filtering to eligible strikes FIRST and then picking nearest-to-target among
+// them turns those rejections into real (slightly further OTM, lower premium)
+// trades. The yield drop is self-correcting: `annualizedYieldPct` falls with the
+// premium, so a badly-adapted candidate simply ranks lower / fails minYield.
 function pickShortRow(
   chain: NormalizedChain,
   targetDelta: number,
+  minStrike = 0,
 ): OptRow | null {
   const spot = chain.underlyingPrice;
-  const otmCalls = chain.calls.filter((c) => c.strike > spot);
+  const otmCalls = chain.calls.filter(
+    (c) => c.strike > spot && c.strike >= minStrike,
+  );
   if (otmCalls.length === 0) return null;
   const targetStrike = spot * (1 + targetDelta / 300); // Δ22 → ~7% OTM heuristic
   return otmCalls.reduce((b, c) =>
@@ -95,13 +110,25 @@ export async function screenPmccCandidates(opts: {
   shortDelta: number; // e.g. 22
   shortDteMin: number; // e.g. 30
   shortDteMax: number; // e.g. 45
-  minOpenInterest?: number; // default 100
-  maxSpreadPct?: number; // default 0.10
+  minOpenInterest?: number; // fallback for both legs when the per-leg knobs are absent
+  minLeapsOpenInterest?: number; // default 25 — see note below
+  minShortOpenInterest?: number; // default 25
+  maxSpreadPct?: number; // default 0.15
+  minAnnualizedYieldPct?: number; // default 20
   now?: Date;
 }): Promise<ScreenerResult> {
   const now = opts.now ?? new Date();
-  const minOI = opts.minOpenInterest ?? 100;
-  const maxSpread = opts.maxSpreadPct ?? 0.1;
+  // OI/spread thresholds were 100/10% — blue-chip numbers that rejected 100% of
+  // the $10-16 watchlist, whose LEAPS are thin by nature. The LEAPS leg is bought
+  // once and held for months, so its OI matters far less than the short leg's
+  // (rolled monthly); both are tunable now rather than hardcoded.
+  const minLeapsOI = opts.minLeapsOpenInterest ?? opts.minOpenInterest ?? 25;
+  const minShortOI = opts.minShortOpenInterest ?? opts.minOpenInterest ?? 25;
+  const maxSpread = opts.maxSpreadPct ?? 0.15;
+  // Guards the floor-adapt in pickShortRow: if clearing the LEAPS breakeven
+  // pushes the short so far OTM that the premium is negligible, the diagonal
+  // isn't worth the capital — reject instead of opening a dead position.
+  const minYield = opts.minAnnualizedYieldPct ?? 20;
   const budget = opts.accountSizeUsd * (opts.pmccBudgetPct / 100);
 
   const ranked: ScreenedCandidate[] = [];
@@ -151,12 +178,17 @@ export async function screenPmccCandidates(opts: {
           return;
         }
 
+        // LEAPS first — its breakeven (strike + ask) is the floor the short leg
+        // must clear, so the short pick depends on it.
         const leapsRow = pickLeapsRow(leapsChain, opts.leapsDelta);
-        const shortRow = pickShortRow(shortChain, opts.shortDelta);
-        if (!leapsRow || !shortRow) {
-          errors[symbol] = !leapsRow
-            ? "no ITM LEAPS strike"
-            : "no OTM short strike";
+        if (!leapsRow) {
+          errors[symbol] = "no ITM LEAPS strike";
+          return;
+        }
+        const breakevenFloor = leapsRow.strike + leapsRow.ask;
+        const shortRow = pickShortRow(shortChain, opts.shortDelta, breakevenFloor);
+        if (!shortRow) {
+          errors[symbol] = "no listed short strike above LEAPS breakeven";
           return;
         }
 
@@ -176,18 +208,24 @@ export async function screenPmccCandidates(opts: {
           reasons.push(
             `debit $${debit.toFixed(0)} > budget $${budget.toFixed(0)}`,
           );
-        if (leapsRow.openInterest < minOI)
-          reasons.push(`LEAPS OI ${leapsRow.openInterest} < ${minOI}`);
-        if (shortRow.openInterest < minOI)
-          reasons.push(`short OI ${shortRow.openInterest} < ${minOI}`);
+        if (leapsRow.openInterest < minLeapsOI)
+          reasons.push(`LEAPS OI ${leapsRow.openInterest} < ${minLeapsOI}`);
+        if (shortRow.openInterest < minShortOI)
+          reasons.push(`short OI ${shortRow.openInterest} < ${minShortOI}`);
         if (spreadPct(leapsRow) > maxSpread)
           reasons.push(
             `LEAPS spread ${(spreadPct(leapsRow) * 100).toFixed(0)}% > ${maxSpread * 100}%`,
           );
         if (shortMid <= 0) reasons.push("no short quote");
-        // Floor invariant must leave room for a credit: shortStrike ≥ leapsStrike + debit/100.
-        if (shortRow.strike < leapsRow.strike + leapsRow.ask)
-          reasons.push("floor invariant leaves no OTM short room");
+        // Floor invariant is now enforced by construction in pickShortRow (it only
+        // considers strikes ≥ breakeven), so this is a belt-and-braces assertion
+        // rather than the main gate it used to be.
+        if (shortRow.strike < breakevenFloor)
+          reasons.push("short strike below LEAPS breakeven");
+        if (annualizedYieldPct < minYield)
+          reasons.push(
+            `yield ${annualizedYieldPct.toFixed(0)}%/yr < ${minYield}%`,
+          );
 
         const cand: ScreenedCandidate = {
           symbol,

@@ -1,12 +1,44 @@
-// Deribit public options chain (BTC/ETH). No API key required.
+// Deribit public options chain. No API key required.
 // One call to get_book_summary_by_currency returns every live option's IV, OI,
 // volume and bid/ask; the ticker endpoint adds native greeks for a single
-// contract. Premiums/bid/ask are quoted in the base coin and converted to USD
-// via underlying_price so the rest of the app stays in USD.
+// contract.
+//
+// Deribit runs TWO separate books per asset, and the difference matters:
+//
+//   "ETH"       coin-margined  — collateral, premium and settlement all in ETH.
+//                               Quotes are denominated in the coin, so they get
+//                               multiplied by underlying_price to reach USD.
+//                               Deepest liquidity (~1.7M OI) but a short put
+//                               here is NOT cash-secured: the margin is ETH, so
+//                               you carry coin exposure on the collateral itself
+//                               on top of the put's downside.
+//   "ETH_USDC"  USDC-margined  — collateral and settlement in USDC. Quotes are
+//                               ALREADY in USD; multiplying them would inflate
+//                               every premium ~1,850×. Thinner (~2% of the coin
+//                               book's OI) but genuinely cash-secured, which is
+//                               what the wheel strategy actually assumes.
+//
+// Both are reachable here; deribit-chain.ts (the trading path) uses the USDC
+// book, while load.ts's display/guru path stays on the deeper coin book.
 
 import type { NormalizedChain, OptRow } from "./symbol";
 
 const BASE = "https://www.deribit.com/api/v2/public";
+
+// A tradable Deribit option book. The `_USDC` variants are USDC-margined.
+export type DeribitBook = "BTC" | "ETH" | "BTC_USDC" | "ETH_USDC";
+
+// USDC-margined instruments live under the shared `currency=USDC` book and are
+// identified by their instrument-name prefix, not by their own currency code.
+function bookApiCurrency(book: DeribitBook): string {
+  return book.endsWith("_USDC") ? "USDC" : book;
+}
+
+// True when quotes come back denominated in the base coin (and so need
+// converting to USD). USDC-margined books already quote in USD.
+function isCoinQuoted(book: DeribitBook): boolean {
+  return !book.endsWith("_USDC");
+}
 
 const MONTHS: Record<string, number> = {
   JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5,
@@ -57,7 +89,7 @@ const MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SE
 // Build a Deribit instrument name from parts, e.g. BTC-20JUN26-58000-C.
 // Deribit uses no leading zero on the day.
 export function buildDeribitInstrument(
-  currency: "BTC" | "ETH",
+  book: DeribitBook,
   expiryUnix: number,
   strike: number,
   type: "C" | "P"
@@ -66,7 +98,7 @@ export function buildDeribitInstrument(
   const day = d.getUTCDate();
   const mon = MONTH_NAMES[d.getUTCMonth()];
   const yy = String(d.getUTCFullYear()).slice(2);
-  return `${currency}-${day}${mon}${yy}-${strike}-${type}`;
+  return `${book}-${day}${mon}${yy}-${strike}-${type}`;
 }
 
 async function deribitGet<T>(path: string): Promise<T | null> {
@@ -128,13 +160,19 @@ export async function getDeribitTicker(instrument: string): Promise<TickerResult
 // Full chain for BTC or ETH. When expiryUnix is omitted, selects the nearest
 // future expiry. Coin-denominated quotes are converted to USD.
 export async function getDeribitChain(
-  currency: "BTC" | "ETH",
+  book: DeribitBook,
   expiryUnix?: number
 ): Promise<NormalizedChain | null> {
-  const rows = await deribitGet<BookRow[]>(
-    `/get_book_summary_by_currency?currency=${currency}&kind=option`
+  const all = await deribitGet<BookRow[]>(
+    `/get_book_summary_by_currency?currency=${bookApiCurrency(book)}&kind=option`
   );
-  if (!rows || rows.length === 0) return null;
+  if (!all || all.length === 0) return null;
+
+  // The USDC book is shared across assets (BTC_USDC, ETH_USDC, SOL_USDC, …) —
+  // narrow to this one by instrument-name prefix. Coin books are already
+  // single-asset, but the same filter is harmless there.
+  const rows = all.filter((r) => r.instrument_name.startsWith(`${book}-`));
+  if (rows.length === 0) return null;
 
   // Underlying price: median of reported underlying_price (robust to a few zeros).
   const ups = rows
@@ -162,8 +200,11 @@ export async function getDeribitChain(
   const target =
     expiryUnix && expirations.includes(expiryUnix) ? expiryUnix : expirations[0];
 
-  const toUsd = (coin: number | null | undefined): number =>
-    typeof coin === "number" && coin > 0 ? coin * underlyingPrice : 0;
+  // Coin-margined books quote in the base coin; USDC-margined books already
+  // quote in USD. Multiplying the latter would inflate every premium ~1,850×.
+  const coinQuoted = isCoinQuoted(book);
+  const toUsd = (px: number | null | undefined): number =>
+    typeof px === "number" && px > 0 ? (coinQuoted ? px * underlyingPrice : px) : 0;
 
   const toRow = (p: Parsed): OptRow => {
     const last = p.last ?? p.mark_price ?? 0;
@@ -189,7 +230,7 @@ export async function getDeribitChain(
 
   return {
     source: "deribit",
-    underlying: currency,
+    underlying: book,
     underlyingPrice,
     expiry: target,
     expirations,

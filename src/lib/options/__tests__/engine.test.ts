@@ -6,9 +6,32 @@
 // runs without a Postgres connection — collaborators (price feed, council,
 // screener) are mocked directly since they're tested/testable elsewhere.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OptionsStrategyContext } from "../strategy-context";
 import type { Store, Row } from "./fakeDb";
 
-const hoisted = vi.hoisted(() => ({ store: null as Store | null }));
+const hoisted = vi.hoisted(() => ({
+  store: null as Store | null,
+  context: null as Record<string, unknown> | null,
+  loadContext: vi.fn(),
+  ensureRun: vi.fn(),
+  reconcile: vi.fn(),
+  alpacaConstructor: vi.fn(),
+  appendIntent: vi.fn(),
+  appendExecution: vi.fn(),
+  appendFill: vi.fn(),
+  appendLifecycle: vi.fn(),
+  broker: {
+    name: "alpaca",
+    environment: "paper" as "paper" | "live",
+    getAccount: vi.fn(),
+    getPositions: vi.fn(),
+    getOpenOrders: vi.fn(),
+    placeOrder: vi.fn(),
+    cancelOrder: vi.fn(),
+    cancelAllOrders: vi.fn(),
+    getOptionActivities: vi.fn(),
+  },
+}));
 
 // engine.ts (and its DB/council imports) are marked `import "server-only"` —
 // a Next.js build-time guard that throws outside the Next server bundler.
@@ -47,6 +70,32 @@ vi.mock("@/db/client", async () => {
   return { db: makeFakeDb(store) };
 });
 
+vi.mock("../strategy-context", () => ({
+  loadOptionsStrategyContext: (...args: unknown[]) => hoisted.loadContext(...args),
+  ensureOptionsStrategyRun: (...args: unknown[]) => hoisted.ensureRun(...args),
+}));
+
+vi.mock("../brokers/reconcile", () => ({
+  reconcileAlpacaPositions: (...args: unknown[]) => hoisted.reconcile(...args),
+}));
+
+vi.mock("../brokers/alpaca", () => ({
+  AlpacaBroker: class {
+    constructor(environment: "paper" | "live") {
+      hoisted.alpacaConstructor(environment);
+      hoisted.broker.environment = environment;
+      return hoisted.broker;
+    }
+  },
+}));
+
+vi.mock("../strategy-ledger", () => ({
+  appendOptionOrderIntent: (...args: unknown[]) => hoisted.appendIntent(...args),
+  appendOptionExecution: (...args: unknown[]) => hoisted.appendExecution(...args),
+  appendOptionFillTradeCashFlow: (...args: unknown[]) => hoisted.appendFill(...args),
+  appendOptionLifecycle: (...args: unknown[]) => hoisted.appendLifecycle(...args),
+}));
+
 const getPrice = vi.fn();
 const getPriceHistory = vi.fn();
 vi.mock("@/lib/market", () => ({ getPrice: (...a: unknown[]) => getPrice(...a), getPriceHistory: (...a: unknown[]) => getPriceHistory(...a) }));
@@ -62,9 +111,74 @@ vi.mock("@/lib/options/screener", () => ({
 const getYahooOptions = vi.fn();
 vi.mock("@/lib/yahoo", () => ({ getYahooOptions: (...a: unknown[]) => getYahooOptions(...a) }));
 
+// Deribit is a live public HTTP endpoint — mocked so crypto tests never hit it.
+const fetchDeribitCSPQuote = vi.fn();
+vi.mock("../deribit-chain", () => ({
+  fetchDeribitCSPQuote: (...a: unknown[]) => fetchDeribitCSPQuote(...a),
+  fetchDeribitCCQuote: vi.fn(async () => null),
+}));
+
 const { runOptionsForUser, manageOptionsPositionsForUser } = await import("../engine");
 
 const USER = "11111111-1111-1111-1111-111111111111";
+const TEST_ACCOUNT_FINGERPRINT = "test-fixture:alpaca:paper:account-001";
+
+function allowedContext(
+  overrides: Partial<OptionsStrategyContext> = {},
+): OptionsStrategyContext {
+  const now = new Date();
+  const allowed = { allowed: true, reasons: [] };
+  const context: OptionsStrategyContext = {
+    identity: {
+      strategyKey: "ai-options",
+      runId: "22222222-2222-5222-8222-222222222222",
+      implementationVersion: "options-engine-v1",
+      parameterVersion: "settings-v1",
+      parameterHash: "test-parameter-hash",
+    },
+    mode: "paper",
+    lifecycle: "paper",
+    evidenceClass: "forward",
+    brokerEnvironment: "paper",
+    configurationReasons: [],
+    reconciliation: {
+      id: "test-reconciliation-id",
+      user_id: USER,
+      run_id: "22222222-2222-5222-8222-222222222222",
+      strategy_key: "ai-options",
+      idempotency_key: "test-reconciliation-key",
+      broker: "alpaca",
+      environment: "paper",
+      account_fingerprint: TEST_ACCOUNT_FINGERPRINT,
+      status: "reconciled",
+      difference: "0",
+      difference_pct: "0",
+      positions: [],
+      open_orders: [],
+      mismatches: [],
+      source: "test",
+      snapshot_at: now,
+      valid_until: new Date(now.getTime() + 300_000),
+      created_at: now,
+    },
+    policyInput: {
+      lifecycle: "paper",
+      mode: "paper",
+      entriesEnabled: true,
+      riskReducingManagementEnabled: true,
+      reconciliationStatus: "reconciled",
+      reconciliationObservedAt: now,
+      reconciliationMaxAgeMs: 300_000,
+      now,
+      exactExposureMatch: true,
+      accountIdentityMatches: true,
+      environmentMatches: true,
+    },
+    canAddExposure: () => allowed,
+    canReduceExposure: () => allowed,
+  };
+  return { ...context, ...overrides };
+}
 
 function verdict(v: "BUY" | "HOLD" | "SELL", confidence: number) {
   return { verdict: v, confidence, summary: "", agents: [], generatedAt: new Date().toISOString() };
@@ -75,6 +189,12 @@ function baseSettings(overrides: Partial<Row> = {}): Row {
     user_id: USER,
     kill_switch: false,
     paper: true,
+    entries_enabled: true,
+    risk_reducing_management_enabled: true,
+    application_mode: "paper",
+    broker_environment: "paper",
+    broker_account_fingerprint: TEST_ACCOUNT_FINGERPRINT,
+    reconciliation_max_age_seconds: 300,
     max_collateral_usd: "200000",
     long_play_budget_usd: "200",
     long_play_enabled: false, // off by default — most tests aren't exercising this path
@@ -163,10 +283,53 @@ function store(): Store {
 beforeEach(() => {
   const s = store();
   for (const k of Object.keys(s)) s[k] = [];
+
+  hoisted.context = allowedContext();
+  hoisted.loadContext.mockReset();
+  hoisted.loadContext.mockImplementation(async () => hoisted.context);
+  hoisted.ensureRun.mockReset();
+  hoisted.ensureRun.mockResolvedValue(true);
+  hoisted.reconcile.mockReset();
+  hoisted.reconcile.mockResolvedValue({ status: "reconciled" });
+  hoisted.alpacaConstructor.mockReset();
+  hoisted.appendIntent.mockReset();
+  hoisted.appendIntent.mockResolvedValue(true);
+  hoisted.appendExecution.mockReset();
+  hoisted.appendExecution.mockResolvedValue(true);
+  hoisted.appendFill.mockReset();
+  hoisted.appendFill.mockResolvedValue(undefined);
+  hoisted.appendLifecycle.mockReset();
+  hoisted.appendLifecycle.mockResolvedValue(undefined);
+  hoisted.broker.environment = "paper";
+  hoisted.broker.getAccount.mockReset();
+  hoisted.broker.getAccount.mockResolvedValue({
+    id: "test-alpaca-account-001",
+    environment: "paper",
+  });
+  hoisted.broker.getPositions.mockReset();
+  hoisted.broker.getPositions.mockResolvedValue([]);
+  hoisted.broker.getOpenOrders.mockReset();
+  hoisted.broker.getOpenOrders.mockResolvedValue([]);
+  hoisted.broker.placeOrder.mockReset();
+  hoisted.broker.placeOrder.mockResolvedValue({
+    brokerOrderId: "test-broker-order-001",
+    status: "filled",
+    filledPrice: 1,
+    filledContracts: 1,
+  });
+  hoisted.broker.cancelOrder.mockReset();
+  hoisted.broker.cancelOrder.mockResolvedValue(undefined);
+  hoisted.broker.cancelAllOrders.mockReset();
+  hoisted.broker.cancelAllOrders.mockResolvedValue(undefined);
+  hoisted.broker.getOptionActivities.mockReset();
+  hoisted.broker.getOptionActivities.mockResolvedValue([]);
+
   getPrice.mockReset();
   getPriceHistory.mockReset();
   runCouncil.mockReset();
   getYahooOptions.mockReset();
+  fetchDeribitCSPQuote.mockReset();
+  fetchDeribitCSPQuote.mockResolvedValue(null);
   // Default: no real chain available — every CSP/CC test falls back to the
   // pre-existing BS-off-HV path unless it explicitly opts into a real quote.
   getYahooOptions.mockResolvedValue(null);
@@ -252,6 +415,134 @@ describe("runOptionsForUser — guardrails", () => {
     getPrice.mockResolvedValue({ price: 510 });
     const second = await runOptionsForUser(USER, { force: true });
     expect(second.outcomes.find((o) => o.status === "opened_csp")).toBeTruthy();
+  });
+});
+
+describe("runOptionsForUser — modeled weekly recovery", () => {
+  function arrangeModeledCsp() {
+    store().ai_options_settings.push(baseSettings());
+    store().ai_options_wheel.push(wheelRow("SPY", { state: "cash" }));
+    getPrice.mockResolvedValue({ price: 510 });
+    runCouncil.mockResolvedValue(verdict("HOLD", 50));
+  }
+
+  it("releases the weekly claim when initial action authorization denies before intent", async () => {
+    arrangeModeledCsp();
+    const allowed = { allowed: true, reasons: [] };
+    const denied = { allowed: false, reasons: ["reconciliation_stale"] };
+    const canAddExposure = vi.fn()
+      .mockReturnValueOnce(allowed) // runtime bootstrap
+      .mockReturnValueOnce(denied) // modeled action intent
+      .mockReturnValue(allowed);
+    hoisted.context = allowedContext({ canAddExposure });
+
+    const first = await runOptionsForUser(USER);
+
+    expect(first.outcomes).toContainEqual(expect.objectContaining({
+      status: "skipped",
+      reason: expect.stringContaining("reconciliation_stale"),
+    }));
+    expect(hoisted.appendIntent).not.toHaveBeenCalled();
+    expect(hoisted.appendExecution).not.toHaveBeenCalled();
+    expect(hoisted.appendFill).not.toHaveBeenCalled();
+    expect(store().ai_options_positions).toHaveLength(0);
+    expect(store().ai_options_orders).toHaveLength(0);
+
+    const retry = await runOptionsForUser(USER, { force: true });
+    expect(retry.outcomes).toContainEqual(expect.objectContaining({ status: "opened_csp" }));
+    expect(store().ai_options_positions).toHaveLength(1);
+  });
+
+  it("releases the weekly claim when final authorization denies directly before insertion", async () => {
+    arrangeModeledCsp();
+    const allowed = { allowed: true, reasons: [] };
+    const denied = { allowed: false, reasons: ["exact_exposure_mismatch"] };
+    const canAddExposure = vi.fn()
+      .mockReturnValueOnce(allowed) // runtime bootstrap
+      .mockReturnValueOnce(allowed) // modeled action intent
+      .mockReturnValueOnce(denied) // final pre-insert check
+      .mockReturnValue(allowed);
+    hoisted.context = allowedContext({ canAddExposure });
+
+    const first = await runOptionsForUser(USER);
+
+    expect(first.outcomes).toContainEqual(expect.objectContaining({
+      status: "skipped",
+      reason: expect.stringContaining("exact_exposure_mismatch"),
+    }));
+    expect(hoisted.appendIntent).toHaveBeenCalledTimes(1);
+    expect(hoisted.appendExecution).not.toHaveBeenCalled();
+    expect(hoisted.appendFill).not.toHaveBeenCalled();
+    expect(store().ai_options_positions).toHaveLength(0);
+    expect(store().ai_options_orders).toHaveLength(0);
+
+    const retry = await runOptionsForUser(USER, { force: true });
+    expect(retry.outcomes).toContainEqual(expect.objectContaining({ status: "opened_csp" }));
+    expect(store().ai_options_positions).toHaveLength(1);
+  });
+
+  it("releases the weekly claim when intent evidence fails before exposure mutation", async () => {
+    arrangeModeledCsp();
+    hoisted.appendIntent.mockRejectedValueOnce(new Error("intent ledger unavailable"));
+
+    const first = await runOptionsForUser(USER);
+
+    expect(first.outcomes).toContainEqual(expect.objectContaining({
+      status: "failed",
+      reason: "intent ledger unavailable",
+    }));
+    expect(store().ai_options_positions).toHaveLength(0);
+    expect(store().ai_options_orders).toHaveLength(0);
+    expect(hoisted.appendExecution).not.toHaveBeenCalled();
+    expect(hoisted.appendFill).not.toHaveBeenCalled();
+
+    const retry = await runOptionsForUser(USER, { force: true });
+    expect(retry.outcomes).toContainEqual(expect.objectContaining({ status: "opened_csp" }));
+    expect(store().ai_options_positions).toHaveLength(1);
+  });
+
+  it("preserves the weekly claim when execution evidence fails after insertion", async () => {
+    arrangeModeledCsp();
+    hoisted.appendExecution.mockRejectedValueOnce(new Error("execution ledger unavailable"));
+
+    const first = await runOptionsForUser(USER);
+
+    expect(first.outcomes).toContainEqual(expect.objectContaining({
+      status: "failed",
+      reason: expect.stringContaining("weekly claim preserved"),
+    }));
+    expect(store().ai_options_positions).toHaveLength(1);
+    expect(store().ai_options_orders).toHaveLength(1);
+    expect(hoisted.appendFill).not.toHaveBeenCalled();
+
+    const retry = await runOptionsForUser(USER, { force: true });
+    expect(retry.outcomes).toContainEqual(expect.objectContaining({
+      status: "skipped",
+      reason: "already processed this week",
+    }));
+    expect(store().ai_options_positions).toHaveLength(1);
+  });
+
+  it("preserves the weekly claim when fill evidence fails after insertion", async () => {
+    arrangeModeledCsp();
+    hoisted.appendFill.mockRejectedValueOnce(new Error("fill ledger unavailable"));
+
+    const first = await runOptionsForUser(USER);
+
+    expect(first.outcomes).toContainEqual(expect.objectContaining({
+      status: "failed",
+      reason: expect.stringContaining("weekly claim preserved"),
+    }));
+    expect(store().ai_options_positions).toHaveLength(1);
+    expect(store().ai_options_orders).toHaveLength(1);
+    expect(hoisted.appendExecution).toHaveBeenCalledTimes(1);
+
+    const retry = await runOptionsForUser(USER, { force: true });
+    expect(retry.outcomes).toContainEqual(expect.objectContaining({
+      status: "skipped",
+      reason: "already processed this week",
+    }));
+    expect(store().ai_options_positions).toHaveLength(1);
   });
 });
 
@@ -342,6 +633,34 @@ describe("runOptionsForUser — collateral cap", () => {
     const result = await runOptionsForUser(USER);
     expect(result.outcomes[0]).toMatchObject({ status: "skipped", reason: "collateral cap reached" });
     expect(store().ai_options_positions).toHaveLength(0);
+  });
+
+  it("counts CSP collateral opened earlier in the same run", async () => {
+    store().ai_options_settings.push(baseSettings({
+      max_collateral_usd: "750",
+      underlyings: [
+        { symbol: "SPY", class: "etf" },
+        { symbol: "QQQ", class: "etf" },
+      ],
+    }));
+    store().ai_options_wheel.push(
+      wheelRow("SPY", { state: "cash" }),
+      wheelRow("QQQ", { state: "cash" })
+    );
+    getPrice.mockResolvedValue({ price: 510 });
+    runCouncil.mockResolvedValue(verdict("HOLD", 50));
+
+    const result = await runOptionsForUser(USER);
+
+    expect(result.outcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ underlying: "SPY", status: "opened_csp" }),
+      expect.objectContaining({ underlying: "QQQ", status: "skipped", reason: "collateral cap reached" }),
+    ]));
+    expect(store().ai_options_positions).toHaveLength(1);
+    expect(store().ai_options_positions[0]).toMatchObject({
+      underlying: "SPY",
+      collateral_usd: "500.00",
+    });
   });
 });
 
@@ -739,5 +1058,257 @@ describe("manageOptionsPositionsForUser — daily position management", () => {
     expect(
       store().ai_options_positions.find((p) => p.strategy === "pmcc_short" && p.status === "open")
     ).toBeTruthy();
+  });
+});
+
+// ── Crypto (Deribit) wheel ───────────────────────────────────────────────────
+// Two bugs kept crypto permanently inert regardless of settings: a blanket
+// GUARDRAIL 1.5 skip of ALL crypto in whole-contracts mode, and a hardcoded
+// 100-unit contract multiplier. Deribit BTC/ETH options are ONE COIN per
+// contract, so the multiplier made an ETH put at K1700 read as $170,000 of
+// collateral instead of $1,700 — it would have failed affordability even with
+// the guardrail lifted.
+const DERIBIT_EXP = new Date(Date.now() + 20 * 86_400_000);
+function deribitQuote(strike: number, bid: number) {
+  return {
+    strike,
+    expiry: DERIBIT_EXP,
+    dte: 20,
+    bid,
+    ask: bid * 1.1,
+    premium: bid,
+    greeks: { delta: -0.22, gamma: 0, theta: 0, vega: 0, iv: 0.5 },
+    openInterest: 500,
+    spreadPct: 0.08,
+    iv: 0.5,
+    contractSymbol: `ETH-14AUG26-${strike}-P`,
+  };
+}
+
+describe("runOptionsForUser — crypto via Deribit", () => {
+  it("sizes an ETH CSP at ONE coin per contract, not 100", async () => {
+    store().ai_options_settings.push(
+      baseSettings({
+        whole_contracts: true,
+        underlyings: [{ symbol: "ETH", class: "crypto", mode: "wheel" }],
+      })
+    );
+    store().ai_options_wheel.push(wheelRow("ETH", { state: "cash" }));
+    getPrice.mockResolvedValue({ price: 1854 });
+    runCouncil.mockResolvedValue(verdict("HOLD", 50));
+    fetchDeribitCSPQuote.mockResolvedValue(deribitQuote(1700, 26.95));
+
+    const result = await runOptionsForUser(USER);
+    const opened = result.outcomes.find((o) => o.status === "opened_csp");
+    expect(opened).toBeTruthy();
+    const pos = store().ai_options_positions[0];
+    // 1700 × 1, NOT 1700 × 100 — this is the whole point of the fix.
+    expect(pos.collateral_usd).toBe("1700.00");
+    expect(pos.contract_multiplier).toBe("1.00000000");
+    expect(pos.entry_premium).toBe("26.9500");
+  });
+
+  it("still rejects BTC — one contract's collateral dwarfs the account", async () => {
+    store().ai_options_settings.push(
+      baseSettings({
+        whole_contracts: true,
+        underlyings: [{ symbol: "BTC", class: "crypto", mode: "wheel" }],
+      })
+    );
+    store().ai_options_wheel.push(wheelRow("BTC", { state: "cash" }));
+    getPrice.mockResolvedValue({ price: 64_139 });
+    runCouncil.mockResolvedValue(verdict("HOLD", 50));
+    // $58k of collateral against a $10k account.
+    fetchDeribitCSPQuote.mockResolvedValue(deribitQuote(58_000, 416.91));
+
+    const result = await runOptionsForUser(USER);
+    expect(result.outcomes.find((o) => o.status === "opened_csp")).toBeUndefined();
+    expect(store().ai_options_positions).toHaveLength(0);
+  });
+
+  it("still skips a crypto PMCC diagonal (GUARDRAIL 1.5 narrowed, not removed)", async () => {
+    store().ai_options_settings.push(
+      baseSettings({
+        whole_contracts: true,
+        underlyings: [{ symbol: "BTC", class: "crypto", mode: "pmcc" }],
+      })
+    );
+    getPrice.mockResolvedValue({ price: 64_139 });
+    runCouncil.mockResolvedValue(verdict("HOLD", 50));
+
+    const result = await runOptionsForUser(USER);
+    expect(result.outcomes[0]).toMatchObject({ status: "skipped" });
+    expect(String(result.outcomes[0].reason)).toMatch(/PMCC diagonal not affordable/);
+    expect(store().ai_options_positions).toHaveLength(0);
+  });
+
+  it("an ITM crypto put at expiry books the cash loss and returns the slot to cash", async () => {
+    // Cash-settled: no coins arrive, so holding_stock would strand the slot
+    // forever (it would wait to write calls against a position that doesn't exist).
+    store().ai_options_settings.push(
+      baseSettings({
+        whole_contracts: true,
+        underlyings: [{ symbol: "ETH", class: "crypto", mode: "wheel" }],
+      })
+    );
+    store().ai_options_wheel.push(wheelRow("ETH", { state: "cash" }));
+    store().ai_options_positions.push(
+      positionRow({
+        underlying: "ETH",
+        asset_class: "crypto",
+        strategy: "csp",
+        strike: "1700",
+        entry_premium: "27",
+        contract_multiplier: "1",
+        expiry: new Date(Date.now() - 86_400_000), // expired
+        collateral_usd: "1700",
+      })
+    );
+    getPrice.mockResolvedValue({ price: 1600 }); // ITM by $100
+    runCouncil.mockResolvedValue(verdict("HOLD", 50));
+    fetchDeribitCSPQuote.mockResolvedValue(null);
+
+    await runOptionsForUser(USER);
+    const settled = store().ai_options_positions.find((p) => p.status === "assigned");
+    expect(settled).toBeTruthy();
+    // premium 27 − intrinsic 100 − $0.65 commission = −73.65, realized NOW
+    // rather than deferred into an assigned position's cost basis.
+    expect(parseFloat(String(settled!.realized_pnl))).toBeCloseTo(-73.65, 2);
+    const wheel = store().ai_options_wheel.find((w) => w.underlying === "ETH");
+    expect(wheel!.state).toBe("cash");
+    expect(wheel!.shares).toBe("0");
+  });
+
+  it("never writes a covered call against crypto", async () => {
+    // Defensive: a legacy holding_stock row must not sell calls on coins we
+    // never received.
+    store().ai_options_settings.push(
+      baseSettings({
+        whole_contracts: true,
+        underlyings: [{ symbol: "ETH", class: "crypto", mode: "wheel" }],
+      })
+    );
+    store().ai_options_wheel.push(
+      wheelRow("ETH", { state: "holding_stock", shares: "1", cost_basis: "1700" })
+    );
+    getPrice.mockResolvedValue({ price: 1854 });
+    runCouncil.mockResolvedValue(verdict("HOLD", 50));
+
+    const result = await runOptionsForUser(USER);
+    expect(String(result.outcomes[0].reason)).toMatch(/cash-settled/);
+    expect(store().ai_options_positions).toHaveLength(0);
+  });
+});
+
+// ── Screener multi-buy ───────────────────────────────────────────────────────
+// The screener used to buy exactly ONE diagonal and `continue`. Combined with
+// the weekly idempotency claim on the single triggering slot, that capped the
+// account at one new diagonal per ISO week — a $10k book carrying ~$500
+// diagonals could never deploy its cash.
+const screenerMod = await import("@/lib/options/screener");
+const mockScreen = vi.mocked(screenerMod.screenPmccCandidates);
+
+function screened(symbol: string, debit: number, yieldPct: number) {
+  return {
+    symbol,
+    spot: 20,
+    leapsStrike: 14,
+    leapsExpiry: new Date(Date.now() + 300 * 86_400_000),
+    leapsDte: 300,
+    leapsAsk: debit / 100,
+    leapsDebitUsd: debit,
+    leapsDelta: 0.8,
+    leapsIV: 0.4,
+    leapsOI: 500,
+    leapsSpreadPct: 0.05,
+    shortStrike: 22,
+    shortExpiry: new Date(Date.now() + 35 * 86_400_000),
+    shortDte: 35,
+    shortMid: 0.5,
+    shortOI: 400,
+    annualizedYieldPct: yieldPct,
+    affordable: true,
+    reasons: [] as string[],
+  };
+}
+
+function pmccSlotSettings() {
+  return baseSettings({
+    whole_contracts: true,
+    auto_select_underlying: true,
+    pmcc_watchlist: ["A", "B", "C", "D"],
+    underlyings: [{ symbol: "SPY", class: "etf", mode: "pmcc" }],
+  });
+}
+
+describe("runOptionsForUser — screener multi-buy", () => {
+  it("opens up to the per-run cap (3) in a single run instead of just one", async () => {
+    store().ai_options_settings.push(pmccSlotSettings());
+    store().ai_options_wheel.push(wheelRow("SPY", { state: "pmcc_cash" }));
+    getPrice.mockResolvedValue({ price: 500 });
+    runCouncil.mockResolvedValue(verdict("HOLD", 50));
+    mockScreen.mockResolvedValue({
+      ranked: [
+        screened("A", 500, 150),
+        screened("B", 600, 140),
+        screened("C", 700, 130),
+        screened("D", 800, 120),
+      ],
+      rejected: [],
+      errors: {},
+    });
+
+    const result = await runOptionsForUser(USER);
+    const opened = result.outcomes.filter((o) => o.status === "opened_long");
+    expect(opened).toHaveLength(3); // cap, not 1 and not all 4
+    expect(opened.map((o) => o.underlying)).toEqual(["A", "B", "C"]); // best yield first
+    expect(store().ai_options_positions).toHaveLength(3);
+    // Each buy gets its own wheel row in holding_leaps.
+    for (const s of ["A", "B", "C"]) {
+      expect(store().ai_options_wheel.find((w) => w.underlying === s)!.state).toBe(
+        "pmcc_holding_leaps"
+      );
+    }
+  });
+
+  it("stops early when remaining cash can't fund the next candidate", async () => {
+    store().ai_options_settings.push(
+      pmccSlotSettings()
+    );
+    store().ai_options_wheel.push(wheelRow("SPY", { state: "pmcc_cash" }));
+    // $9,000 already committed → only $1,000 of the $10k account is free.
+    store().ai_options_positions.push(
+      positionRow({ underlying: "ZZ", strategy: "pmcc_leaps", side: "long", collateral_usd: "9000", expiry: new Date(Date.now() + 300 * 86_400_000) })
+    );
+    getPrice.mockResolvedValue({ price: 500 });
+    runCouncil.mockResolvedValue(verdict("HOLD", 50));
+    mockScreen.mockResolvedValue({
+      ranked: [screened("A", 600, 150), screened("B", 600, 140), screened("C", 600, 130)],
+      rejected: [],
+      errors: {},
+    });
+
+    const result = await runOptionsForUser(USER);
+    const opened = result.outcomes.filter((o) => o.status === "opened_long");
+    // $1,000 free funds exactly one $600 diagonal; the second would overdraw.
+    expect(opened).toHaveLength(1);
+    expect(opened[0].underlying).toBe("A");
+  });
+
+  it("never buys the same symbol twice in one run", async () => {
+    store().ai_options_settings.push(pmccSlotSettings());
+    store().ai_options_wheel.push(wheelRow("SPY", { state: "pmcc_cash" }));
+    getPrice.mockResolvedValue({ price: 500 });
+    runCouncil.mockResolvedValue(verdict("HOLD", 50));
+    // Only ONE distinct candidate — the loop must not re-buy it on each pass.
+    mockScreen.mockResolvedValue({
+      ranked: [screened("A", 500, 150)],
+      rejected: [],
+      errors: {},
+    });
+
+    const result = await runOptionsForUser(USER);
+    expect(result.outcomes.filter((o) => o.status === "opened_long")).toHaveLength(1);
+    expect(store().ai_options_positions).toHaveLength(1);
   });
 });

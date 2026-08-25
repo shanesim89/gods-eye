@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { ai_trading_settings } from "@/db/schema";
 import { runDcaForUser } from "@/lib/trading/engine";
+import { stampCronHeartbeat } from "@/lib/cron-heartbeat";
 
 export const dynamic = "force-dynamic";
 // Hobby caps function duration at 60s. 4 tokens × full council (sequential LLM calls)
@@ -33,6 +34,10 @@ export async function GET(req: Request) {
       results[user_id] = { ran: false, error: err instanceof Error ? err.message : "unknown" };
     }
   }
+
+  // Watchdog heartbeat — stamped even when no token was due (14-day cadence),
+  // so "idle but healthy" is distinguishable from "cron stopped firing".
+  await stampCronHeartbeat("cron:dca:last_run", { processed: armed.length });
 
   return Response.json({ ok: true, processed: armed.length, results });
 }

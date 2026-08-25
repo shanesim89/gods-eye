@@ -4,6 +4,27 @@
 import type { ScreenerResult } from "./screener";
 import type { OptRow } from "./symbol";
 
+// Screener liquidity/quality knobs, in one place so they can be tuned without
+// hunting through the fetch loop. These are passed explicitly from engine.ts
+// rather than left to screenPmccCandidates' internal defaults, so the values the
+// live cron actually runs with are visible here.
+//
+// Promoting these to `ai_options_settings` columns is the natural next step —
+// it needs an additive migration, so they live as constants until then.
+export const SCREENER_TUNING = {
+  // The LEAPS is bought once and held for months; the short leg is rolled every
+  // 30-45 days, so it's the one that genuinely needs a liquid book. Splitting the
+  // two (was a single OI≥100 for both) is what lets thin-but-usable LEAPS through.
+  minLeapsOpenInterest: 25,
+  minShortOpenInterest: 25,
+  maxSpreadPct: 0.15,
+  minAnnualizedYieldPct: 20,
+} as const;
+
+// Cap on how many new diagonals one run may open. Bounded so a single run can't
+// deploy the entire account into positions that all share the same entry date.
+export const MAX_NEW_DIAGONALS_PER_RUN = 3;
+
 export function midPrice(row: OptRow): number {
   if (row.bid > 0 && row.ask > 0) return (row.bid + row.ask) / 2;
   return row.lastPrice > 0 ? row.lastPrice : Math.max(row.bid, row.ask);

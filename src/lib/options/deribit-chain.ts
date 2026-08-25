@@ -1,5 +1,5 @@
 import "server-only";
-import { getDeribitChain } from "./deribit";
+import { getDeribitChain, type DeribitBook } from "./deribit";
 import { bsGreeks, roundStrike, strikeForDelta, yearsTo } from "./blackscholes";
 import { expiryInWindow, spreadPct } from "./screener-util";
 import type { OptRow } from "./symbol";
@@ -23,6 +23,23 @@ import { buildDeribitInstrument } from "./deribit";
 // AAPL/Alpaca live path: correct wiring that a real account's own guardrails
 // may legitimately never exercise, depending on settings.
 
+// The wheel sells CASH-secured puts, so the trading path uses Deribit's
+// USDC-margined book (collateral + settlement in USDC) rather than the deeper
+// coin-margined one. On the coin book the margin is ETH/BTC itself, which means
+// a short put there carries coin exposure on its own collateral on top of the
+// put's downside — a double-long position, not the risk profile the strategy
+// assumes. See the header note in deribit.ts for the two books' economics.
+function usdcBook(underlying: string): DeribitBook {
+  return `${underlying.toUpperCase()}_USDC` as DeribitBook;
+}
+
+// Crypto expiry ladders are far sparser than equity ones. The ETH_USDC book
+// currently jumps 13 DTE → 34 DTE, so the equity CSP window (dte_min/max, 14-30)
+// lands in a hole and matches nothing at all. This brackets the monthly instead.
+// Deliberately a crypto-only override rather than widening the shared
+// dte_min/dte_max settings, which also drive the equity wheel.
+export const CRYPTO_CSP_DTE = { min: 20, max: 45 };
+
 function nearestRow(rows: OptRow[], targetStrike: number): OptRow | null {
   if (rows.length === 0) return null;
   return rows.reduce((best, r) => (Math.abs(r.strike - targetStrike) < Math.abs(best.strike - targetStrike) ? r : best));
@@ -31,7 +48,7 @@ function nearestRow(rows: OptRow[], targetStrike: number): OptRow | null {
 export type LiquidityFilter = { minOpenInterest?: number; maxSpreadPct?: number };
 
 async function fetchDeribitLeg(
-  currency: "BTC" | "ETH",
+  book: DeribitBook,
   optType: "C" | "P",
   targetStrike: number,
   dteMin: number,
@@ -44,11 +61,11 @@ async function fetchDeribitLeg(
   // Crypto books are thinner than equity chains — Yahoo's defaults (OI≥50,
   // spread≤15%) would reject nearly every BTC/ETH strike. Looser but still
   // real: still requires an actual bid, just tolerates the wider crypto market.
-  const probe = await getDeribitChain(currency);
+  const probe = await getDeribitChain(book);
   if (!probe || probe.expirations.length === 0) return null;
   const exp = expiryInWindow(probe.expirations, dteMin, dteMax, now);
   if (!exp) return null;
-  const chain = exp === probe.expiry ? probe : await getDeribitChain(currency, exp);
+  const chain = exp === probe.expiry ? probe : await getDeribitChain(book, exp);
   if (!chain) return null;
   const candidates = strikeRows(optType === "P" ? chain.puts : chain.calls);
   const row = nearestRow(candidates, targetStrike);
@@ -73,7 +90,7 @@ async function fetchDeribitLeg(
     openInterest: row.openInterest,
     spreadPct: spreadPct(row),
     iv,
-    contractSymbol: buildDeribitInstrument(currency, exp, row.strike, optType),
+    contractSymbol: buildDeribitInstrument(book, exp, row.strike, optType),
   };
 }
 
@@ -87,13 +104,13 @@ export async function fetchDeribitCSPQuote(
   now = new Date(),
   liquidity?: LiquidityFilter
 ): Promise<RealLegQuote | null> {
-  const currency = underlying.toUpperCase() as "BTC" | "ETH";
-  const approxT = (cfg.dteMin + cfg.dteMax) / 2 / 365;
+  const { min: dteMin, max: dteMax } = CRYPTO_CSP_DTE;
+  const approxT = (dteMin + dteMax) / 2 / 365;
   const rawK = strikeForDelta(cfg.targetDelta / 100, "P", spot, approxT, cfg.riskFreeRate, sigma);
   let targetStrike = roundStrike(Math.min(rawK, spot));
   if (targetStrike >= spot) targetStrike = roundStrike(spot * 0.99);
   return fetchDeribitLeg(
-    currency, "P", targetStrike, cfg.dteMin, cfg.dteMax, cfg.riskFreeRate, now,
+    usdcBook(underlying), "P", targetStrike, dteMin, dteMax, cfg.riskFreeRate, now,
     (rows) => rows.filter((r) => r.strike < spot),
     liquidity
   );
@@ -112,14 +129,14 @@ export async function fetchDeribitCCQuote(
   verdict?: "BUY" | "HOLD" | "SELL",
   confidence?: number
 ): Promise<RealLegQuote | null> {
-  const currency = underlying.toUpperCase() as "BTC" | "ETH";
+  const { min: dteMin, max: dteMax } = CRYPTO_CSP_DTE;
   const effectiveDelta = adjustCCDeltaForVerdict(cfg.targetDelta, verdict, confidence, cfg.convictionThreshold);
-  const approxT = (cfg.dteMin + cfg.dteMax) / 2 / 365;
+  const approxT = (dteMin + dteMax) / 2 / 365;
   const rawK = strikeForDelta(effectiveDelta / 100, "C", spot, approxT, cfg.riskFreeRate, sigma);
   const floor = Math.max(costBasis, spot);
   const targetStrike = roundStrike(Math.max(rawK, floor));
   return fetchDeribitLeg(
-    currency, "C", targetStrike, cfg.dteMin, cfg.dteMax, cfg.riskFreeRate, now,
+    usdcBook(underlying), "C", targetStrike, dteMin, dteMax, cfg.riskFreeRate, now,
     (rows) => rows.filter((r) => r.strike >= floor),
     liquidity
   );

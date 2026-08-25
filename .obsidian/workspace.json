@@ -182,8 +182,10 @@
       "bases:Create new base": false
     }
   },
-  "active": "6c987e1ef3ef1e10",
+  "active": "af64ed056511e756",
   "lastOpenFiles": [
+    "crypto-brain (bots).md",
+    "Untitled.base",
     "quant-scrap/brain/options_db.py.tmp.29844.2903e1c84e2f",
     "quant-scrap/brain/options_params_cache.json",
     "quant-scrap/brain/__pycache__/options_db.cpython-314.pyc",
@@ -192,7 +194,6 @@
     "quant-scrap/brain/options_db.py",
     "quant-scrap/brain/options_db.py.tmp.29844.4e5094bb1ec1",
     "vercel.json.tmp.29844.f0ad2c4f34ca",
-    "src/lib/trading/engine.ts.tmp.15416.75c438e5fed1",
-    "Untitled.base"
+    "src/lib/trading/engine.ts.tmp.15416.75c438e5fed1"
   ]
 }

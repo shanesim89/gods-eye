@@ -142,6 +142,16 @@ export function roundStrike(K: number): number {
   return Math.round(K * 10) / 10;
 }
 
+// Round upward to a listed strike without violating a minimum strike floor.
+// Safety floors (covered-call basis and PMCC breakeven) must never use nearest
+// rounding because that can move the selected strike back below the floor.
+export function roundStrikeUp(K: number): number {
+  if (K >= 1000) return Math.ceil(K / 5) * 5;
+  if (K >= 100) return Math.ceil(K);
+  if (K >= 25) return Math.ceil(K * 2) / 2;
+  return Math.ceil(K * 10) / 10;
+}
+
 // Years between now and an expiry date (floored at a tiny positive).
 export function yearsTo(expiry: Date, now = new Date()): number {
   const ms = expiry.getTime() - now.getTime();

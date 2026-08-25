@@ -10,6 +10,8 @@ import {
   boolean,
   date,
   index,
+  unique,
+  foreignKey,
 } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
@@ -214,6 +216,157 @@ export const daily_pnl = pgTable(
   })
 );
 
+// ─── Immutable strategy performance ledger ──────────────────────────────────
+
+// daily_pnl above remains a mutable compatibility projection for the calendar.
+// These tables are the authoritative forward-evidence store. Rows are immutable
+// at the database layer (see drizzle/0011_strategy_ledger.sql).
+export const strategy_runs = pgTable(
+  "strategy_runs",
+  {
+    id: uuid("id").primaryKey(),
+    user_id: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+    strategy_key: text("strategy_key").notNull(),
+    implementation_version: text("implementation_version").notNull(),
+    parameter_version: text("parameter_version").notNull(),
+    parameter_hash: text("parameter_hash").notNull(),
+    mode: text("mode").notNull(), // paper | live
+    lifecycle: text("lifecycle").notNull(), // live | paper | benched | retired
+    evidence_class: text("evidence_class").notNull(), // forward | historical_research | legacy_incomplete
+    inception_at: timestamp("inception_at").notNull(),
+    ended_at: timestamp("ended_at"),
+    source: text("source").notNull(),
+    metadata: jsonb("metadata"),
+    created_at: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    identity_unique: unique("strategy_runs_identity_unique").on(t.id, t.user_id, t.strategy_key),
+    user_strategy_idx: index("strategy_runs_user_strategy_idx").on(t.user_id, t.strategy_key),
+  }),
+);
+
+export const strategy_events = pgTable(
+  "strategy_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    user_id: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+    run_id: uuid("run_id").notNull(),
+    strategy_key: text("strategy_key").notNull(),
+    event_type: text("event_type").notNull(), // order_intent | execution | fill | trade | cash_flow | run_end
+    idempotency_key: text("idempotency_key").unique().notNull(),
+    event_at: timestamp("event_at").notNull(),
+    parent_trade_id: text("parent_trade_id"),
+    pair_id: text("pair_id"),
+    leg_id: text("leg_id"),
+    symbol: text("symbol"),
+    side: text("side"),
+    quantity: numeric("quantity", { precision: 24, scale: 8 }),
+    price: numeric("price", { precision: 24, scale: 8 }),
+    gross_amount: numeric("gross_amount", { precision: 20, scale: 6 }),
+    fees: numeric("fees", { precision: 20, scale: 6 }).default("0").notNull(),
+    spread_cost: numeric("spread_cost", { precision: 20, scale: 6 }).default("0").notNull(),
+    slippage_cost: numeric("slippage_cost", { precision: 20, scale: 6 }).default("0").notNull(),
+    financing_funding: numeric("financing_funding", { precision: 20, scale: 6 }).default("0").notNull(),
+    currency: text("currency").default("USD").notNull(),
+    quote_source: text("quote_source"),
+    quote_at: timestamp("quote_at"),
+    price_provenance: text("price_provenance").notNull(), // executable | modeled | journaled
+    broker_reference: text("broker_reference"),
+    source: text("source").notNull(),
+    evidence_class: text("evidence_class").notNull(),
+    detail: jsonb("detail"),
+    created_at: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    run_identity_fk: foreignKey({
+      name: "strategy_events_run_identity_fk",
+      columns: [t.run_id, t.user_id, t.strategy_key],
+      foreignColumns: [strategy_runs.id, strategy_runs.user_id, strategy_runs.strategy_key],
+    }).onDelete("cascade"),
+    run_event_idx: index("strategy_events_run_event_idx").on(t.run_id, t.event_at),
+    parent_trade_idx: index("strategy_events_parent_trade_idx").on(t.parent_trade_id),
+    pair_idx: index("strategy_events_pair_idx").on(t.pair_id),
+  }),
+);
+
+export const strategy_daily_observations = pgTable(
+  "strategy_daily_observations",
+  {
+    user_id: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+    strategy_key: text("strategy_key").notNull(),
+    run_id: uuid("run_id").notNull(),
+    day: date("day").notNull(),
+    opening_marked_nlv: numeric("opening_marked_nlv", { precision: 20, scale: 6 }).notNull(),
+    closing_marked_nlv: numeric("closing_marked_nlv", { precision: 20, scale: 6 }).notNull(),
+    gross_realized_pnl: numeric("gross_realized_pnl", { precision: 20, scale: 6 }).notNull(),
+    net_realized_pnl: numeric("net_realized_pnl", { precision: 20, scale: 6 }).notNull(),
+    unrealized_pnl: numeric("unrealized_pnl", { precision: 20, scale: 6 }).notNull(),
+    gross_return: numeric("gross_return", { precision: 14, scale: 8 }),
+    net_return: numeric("net_return", { precision: 14, scale: 8 }),
+    fees: numeric("fees", { precision: 20, scale: 6 }).default("0").notNull(),
+    spread_cost: numeric("spread_cost", { precision: 20, scale: 6 }).default("0").notNull(),
+    slippage_cost: numeric("slippage_cost", { precision: 20, scale: 6 }).default("0").notNull(),
+    financing_funding: numeric("financing_funding", { precision: 20, scale: 6 }).default("0").notNull(),
+    cash_flows: numeric("cash_flows", { precision: 20, scale: 6 }).default("0").notNull(),
+    deposits: numeric("deposits", { precision: 20, scale: 6 }).default("0").notNull(),
+    withdrawals: numeric("withdrawals", { precision: 20, scale: 6 }).default("0").notNull(),
+    gross_exposure: numeric("gross_exposure", { precision: 20, scale: 6 }).default("0").notNull(),
+    net_exposure: numeric("net_exposure", { precision: 20, scale: 6 }).default("0").notNull(),
+    drawdown: numeric("drawdown", { precision: 14, scale: 8 }),
+    benchmark_return: numeric("benchmark_return", { precision: 14, scale: 8 }),
+    volatility_matched_benchmark_return: numeric("volatility_matched_benchmark_return", { precision: 14, scale: 8 }),
+    reconciliation_status: text("reconciliation_status").notNull(),
+    reconciliation_difference: numeric("reconciliation_difference", { precision: 20, scale: 6 }),
+    reconciliation_difference_pct: numeric("reconciliation_difference_pct", { precision: 14, scale: 8 }),
+    activity_count: integer("activity_count").default(0).notNull(),
+    source: text("source").notNull(),
+    evidence_class: text("evidence_class").notNull(),
+    observed_at: timestamp("observed_at").notNull(),
+    created_at: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.user_id, t.strategy_key, t.run_id, t.day] }),
+    run_identity_fk: foreignKey({
+      name: "strategy_daily_observations_run_identity_fk",
+      columns: [t.run_id, t.user_id, t.strategy_key],
+      foreignColumns: [strategy_runs.id, strategy_runs.user_id, strategy_runs.strategy_key],
+    }).onDelete("cascade"),
+    user_day_idx: index("strategy_daily_observations_user_day_idx").on(t.user_id, t.day),
+  }),
+);
+
+export const strategy_reconciliation_snapshots = pgTable(
+  "strategy_reconciliation_snapshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    user_id: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+    run_id: uuid("run_id").notNull(),
+    strategy_key: text("strategy_key").notNull(),
+    idempotency_key: text("idempotency_key").unique().notNull(),
+    broker: text("broker").notNull(),
+    environment: text("environment").notNull(),
+    account_fingerprint: text("account_fingerprint").notNull(),
+    status: text("status").notNull(), // reconciled | unreconciled | stale | degraded
+    difference: numeric("difference", { precision: 20, scale: 6 }),
+    difference_pct: numeric("difference_pct", { precision: 14, scale: 8 }),
+    positions: jsonb("positions").notNull(),
+    open_orders: jsonb("open_orders").notNull(),
+    mismatches: jsonb("mismatches").notNull(),
+    source: text("source").notNull(),
+    snapshot_at: timestamp("snapshot_at").notNull(),
+    valid_until: timestamp("valid_until").notNull(),
+    created_at: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    run_identity_fk: foreignKey({
+      name: "strategy_reconciliation_run_identity_fk",
+      columns: [t.run_id, t.user_id, t.strategy_key],
+      foreignColumns: [strategy_runs.id, strategy_runs.user_id, strategy_runs.strategy_key],
+    }).onDelete("cascade"),
+    run_snapshot_idx: index("strategy_reconciliation_run_snapshot_idx").on(t.run_id, t.snapshot_at),
+  }),
+);
+
 // ─── AI Portfolio: automated trading ─────────────────────────────────────────
 
 // One row per user. kill_switch defaults TRUE = HALTED until user explicitly arms.
@@ -286,7 +439,15 @@ export const ai_options_settings = pgTable("ai_options_settings", {
     .primaryKey(),
   kill_switch: boolean("kill_switch").default(true).notNull(),
   paper: boolean("paper").default(true).notNull(),
-  max_collateral_usd: numeric("max_collateral_usd", { precision: 18, scale: 2 }).default("200000").notNull(),
+  entries_enabled: boolean("entries_enabled").default(false).notNull(),
+  risk_reducing_management_enabled: boolean("risk_reducing_management_enabled").default(false).notNull(),
+  application_mode: text("application_mode").default("paper").notNull(),
+  broker_environment: text("broker_environment").default("paper").notNull(),
+  broker_account_fingerprint: text("broker_account_fingerprint"),
+  reconciliation_max_age_seconds: integer("reconciliation_max_age_seconds").default(300).notNull(),
+  allocated_marked_nlv_limit_usd: numeric("allocated_marked_nlv_limit_usd", { precision: 18, scale: 2 }).default("6000").notNull(),
+  // Legacy compatibility ceiling. New allocation decisions use marked NLV above.
+  max_collateral_usd: numeric("max_collateral_usd", { precision: 18, scale: 2 }).default("6000").notNull(),
   long_play_budget_usd: numeric("long_play_budget_usd", { precision: 18, scale: 2 }).default("200").notNull(),
   long_play_enabled: boolean("long_play_enabled").default(true).notNull(),
   target_delta: integer("target_delta").default(22).notNull(), // 0.22 — ~78% POP on CSP

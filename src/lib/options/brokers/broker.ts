@@ -23,7 +23,10 @@ export type BrokerOrderResult = {
   filledContracts?: number;
 };
 
+export type BrokerEnvironment = "paper" | "live";
+
 export type BrokerAccount = {
+  accountId: string; // stable, non-secret venue account identifier
   cashUsd: number;
   buyingPowerUsd: number;
   equityUsd: number;
@@ -33,6 +36,13 @@ export type BrokerPosition = {
   contractSymbol: string;
   contracts: number; // negative = short
   avgEntryPrice: number;
+};
+
+export type BrokerOpenOrder = {
+  brokerOrderId: string;
+  contractSymbol: string;
+  side: BrokerOrderSide;
+  contracts: number; // remaining contracts, not original submitted quantity
 };
 
 // Options assignment/exercise/expiration events — the ground truth for what
@@ -50,8 +60,11 @@ export type BrokerActivity = {
 };
 
 export interface OptionsBroker {
+  readonly name: string;
+  readonly environment: BrokerEnvironment;
   getAccount(): Promise<BrokerAccount>;
   getPositions(): Promise<BrokerPosition[]>;
+  getOpenOrders(): Promise<BrokerOpenOrder[]>;
   placeOrder(order: BrokerOptionOrder): Promise<BrokerOrderResult>;
   cancelOrder(brokerOrderId: string): Promise<void>; // used to clean up a placeOrder() that didn't fill
   cancelAllOrders(): Promise<void>; // used by the live kill-switch path

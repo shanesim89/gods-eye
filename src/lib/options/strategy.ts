@@ -10,6 +10,7 @@ import {
   bsGreeks,
   bsPrice,
   roundStrike,
+  roundStrikeUp,
   strikeForDelta,
   yearsTo,
   type Greeks,
@@ -129,16 +130,25 @@ function buildLeg(
 
 // Cash-secured put: short put at ~targetDelta below spot.
 // Collateral fixed at collateralPerContractUsd; multiplier = collateral / strike.
-// Whole-contracts mode: multiplier = 100, collateral = strike × 100 (real cash-secured
-// sizing). Returns null when the collateral won't fit in availableCashUsd — that is
-// correct $10k-account realism (AAPL/SPY CSPs are simply unaffordable).
+// Whole-contracts mode: multiplier = contractSize, collateral = strike × contractSize
+// (real cash-secured sizing). Returns null when the collateral won't fit in
+// availableCashUsd — that is correct $10k-account realism (AAPL/SPY CSPs are
+// simply unaffordable).
+//
+// `contractSize` defaults to the 100-share US equity contract. Deribit BTC/ETH
+// options are ONE COIN, so crypto callers must pass 1 — this is the model
+// fallback that engine.ts uses when the real chain is unavailable, and leaving
+// it hardcoded meant an ETH put priced off the model computed 100× the true
+// collateral and got rejected as "unaffordable" whenever Deribit's expiry
+// window happened to be empty.
 export function selectCSP(
   underlying: string,
   spot: number,
   sigma: number,
   cfg: OptionsStrategyConfig,
   now = new Date(),
-  availableCashUsd?: number
+  availableCashUsd?: number,
+  contractSize = 100
 ): LegSelection | null {
   const expiry = expiryFriday(cfg.dteMin, cfg.dteMax, now);
   const t = yearsTo(expiry, now);
@@ -146,8 +156,8 @@ export function selectCSP(
   let strike = roundStrike(Math.min(rawK, spot));
   // roundStrike can nudge back up to/above spot near ATM — re-clamp to keep the put OTM.
   if (strike >= spot) strike = roundStrike(spot * 0.99);
-  const multiplier = cfg.wholeContracts ? 100 : cfg.collateralPerContractUsd / strike;
-  const collateral = cfg.wholeContracts ? strike * 100 : cfg.collateralPerContractUsd;
+  const multiplier = cfg.wholeContracts ? contractSize : cfg.collateralPerContractUsd / strike;
+  const collateral = cfg.wholeContracts ? strike * contractSize : cfg.collateralPerContractUsd;
   if (cfg.wholeContracts && availableCashUsd != null && collateral > availableCashUsd) return null;
   return buildLeg(underlying, "P", strike, expiry, spot, sigma, cfg.riskFreeRate, collateral, multiplier, now, "short", cfg.slippagePct);
 }
@@ -192,7 +202,7 @@ export function selectCC(
   const t = yearsTo(expiry, now);
   const rawK = strikeForDelta(effectiveDelta / 100, "C", spot, t, cfg.riskFreeRate, sigma);
   const floor = Math.max(costBasis, spot);
-  const strike = roundStrike(Math.max(rawK, floor)); // keep OTM and ≥ cost basis
+  const strike = roundStrikeUp(Math.max(rawK, floor)); // keep OTM and ≥ cost basis
   const multiplier = heldUnits; // cover exactly the held units, not collateral/strike
   return buildLeg(underlying, "C", strike, expiry, spot, sigma, cfg.riskFreeRate, 0, multiplier, now, "short", cfg.slippagePct);
 }
@@ -206,7 +216,8 @@ export function selectLongPlay(
   spot: number,
   sigma: number,
   cfg: OptionsStrategyConfig,
-  now = new Date()
+  now = new Date(),
+  contractSize = 100
 ): LegSelection | null {
   if (verdict === "HOLD") return null;
   if (confidence < cfg.convictionThreshold) return null;
@@ -215,7 +226,7 @@ export function selectLongPlay(
   const t = yearsTo(expiry, now);
   const rawK = strikeForDelta(0.4, optType, spot, t, cfg.riskFreeRate, sigma);
   const strike = roundStrike(rawK);
-  const multiplier = cfg.wholeContracts ? 100 : cfg.collateralPerContractUsd / strike;
+  const multiplier = cfg.wholeContracts ? contractSize : cfg.collateralPerContractUsd / strike;
   const leg = buildLeg(underlying, optType, strike, expiry, spot, sigma, cfg.riskFreeRate, 0, multiplier, now, "long", cfg.slippagePct);
   if (leg.premiumTotal > cfg.longPlayBudgetUsd) return null;
   return leg;
@@ -282,7 +293,7 @@ export function selectPmccShort(
   const t = yearsTo(expiry, now);
   const rawK = strikeForDelta(cfg.targetDelta / 100, "C", spot, t, cfg.riskFreeRate, sigma);
   const floor = Math.max(rawK, leapsStrike + netDebit, spot);
-  const strike = roundStrike(floor);
+  const strike = roundStrikeUp(floor);
   return buildLeg(underlying, "C", strike, expiry, spot, sigma, cfg.riskFreeRate, 0, leapsUnits, now, "short", cfg.slippagePct);
 }
 
@@ -309,7 +320,8 @@ export function settle(
   contracts: number,
   contractMultiplier: number, // stored value from ai_options_positions.contract_multiplier
   costBasis?: number,         // per-unit basis of held shares (required for cc settlement)
-  commissionUsd = 0           // total commissions on this position (open leg; expiry close is free)
+  commissionUsd = 0,          // total commissions on this position (open leg; expiry close is free)
+  cashSettled = false         // true for European cash-settled contracts (Deribit crypto)
 ): SettleResult {
   const mult = contractMultiplier * contracts;
   const credit = entryPremium * mult;
@@ -327,6 +339,16 @@ export function settle(
 
   if (strategy === "csp") {
     if (spotAtExpiry < strike) {
+      // Cash-settled (European, e.g. Deribit crypto): no units change hands, so
+      // the intrinsic loss is realized NOW rather than carried as an unrealized
+      // markdown on an assigned stock position. Booking it as a physical
+      // assignment would invent coins we never received and understate the loss.
+      if (cashSettled) {
+        return {
+          status: "assigned",
+          realizedPnl: credit - (strike - spotAtExpiry) * mult - fees,
+        };
+      }
       return {
         status: "assigned",
         realizedPnl: credit - fees,   // premium income only; basis is full strike

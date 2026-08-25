@@ -7,6 +7,7 @@ import { buildPortfolioDigest } from "@/lib/trading/portfolio-digest";
 import { writeDailySnapshot } from "@/lib/trading/daily-snapshot";
 import { deliverPortfolioDigests } from "@/lib/trading/telegram-delivery";
 import { sendTelegram } from "@/lib/telegram";
+import { stampCronHeartbeat } from "@/lib/cron-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -141,6 +142,18 @@ export async function GET(req: Request) {
   } else {
     out.portfolio_digest = { ran: false, reason: "not Wednesday (UTC)" };
   }
+
+  // ── Watchdog heartbeat (always last) ─────────────────────────────────────
+  // Every section above is individually try/caught, so we reach here even on a
+  // partial failure — the stamp means "the cron fired", and the per-section
+  // flags say what actually succeeded. Only a hard crash (or the cron never
+  // firing) leaves this key stale, which is exactly what should alert.
+  await stampCronHeartbeat("cron:digest:last_run", {
+    scanner: (out.scanner as { ok?: boolean } | undefined)?.ok ?? false,
+    options: (out.options as { ran?: boolean } | undefined)?.ran ?? false,
+    options_manage: (out.options_manage as { ran?: boolean } | undefined)?.ran ?? false,
+    daily_snapshot: (out.daily_snapshot as { ran?: boolean } | undefined)?.ran ?? false,
+  });
 
   return Response.json({ ok: true, ...out });
 }

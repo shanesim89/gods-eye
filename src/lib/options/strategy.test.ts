@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applySlippage, selectLeaps, selectPmccShort, selectCSP, selectCC, adjustCCDeltaForVerdict, settle } from "./strategy";
+import { applySlippage, selectLeaps, selectPmccShort, selectCSP, selectCC, selectLongPlay, adjustCCDeltaForVerdict, settle } from "./strategy";
 import type { OptionsStrategyConfig } from "./strategy";
 
 // Fractional-mode base config with zero slippage/commission so the legacy
@@ -62,6 +62,12 @@ describe("selectPmccShort (PMCC short leg)", () => {
   it("covers exactly the LEAPS units", () => {
     const short = selectPmccShort("SPY", 600, 560, 50, 0.83, 0.25, cfg, NOW);
     expect(short.multiplier).toBeCloseTo(0.83, 8);
+  });
+
+  it("rounds upward rather than below a fractional breakeven floor", () => {
+    const short = selectPmccShort("TEST", 24.9, 20, 8.13, 1, 0.35, cfg, NOW);
+    expect(short.strike).toBeGreaterThanOrEqual(28.13);
+    expect(short.strike).toBe(28.5);
   });
 });
 
@@ -132,6 +138,22 @@ describe("selectCC — verdict changes the actual strike, not just the delta num
     const holdCC = selectCC("SPY", spot, costBasis, 1, 0.25, cfg, NOW, "HOLD", 90);
     expect(sellCC.strike).toBeLessThan(holdCC.strike);
     expect(buyCC.strike).toBeGreaterThan(holdCC.strike);
+  });
+
+  it("never rounds below a fractional share-cost floor", () => {
+    const call = selectCC("TEST", 24.9, 26.13, 1, 0.2, cfg, NOW);
+    expect(call.strike).toBeGreaterThanOrEqual(26.13);
+    expect(call.strike).toBe(26.5);
+  });
+});
+
+describe("selectLongPlay — contract size", () => {
+  it("uses one coin for whole-contract crypto options", () => {
+    const crypto = { ...whole, longPlayBudgetUsd: 10_000 };
+    const leg = selectLongPlay("ETH", "BUY", 90, 1_850, 0.5, crypto, NOW, 1);
+    expect(leg).not.toBeNull();
+    expect(leg!.multiplier).toBe(1);
+    expect(leg!.premiumTotal).toBeLessThan(10_000);
   });
 });
 
@@ -222,5 +244,73 @@ describe("profit-take threshold math", () => {
     expect(threshold).toBeCloseTo(1.0, 10);
     expect(0.99 <= threshold).toBe(true);
     expect(1.01 <= threshold).toBe(false);
+  });
+});
+
+// Deribit crypto options are EUROPEAN CASH-SETTLED: an ITM short put pays out in
+// cash and never delivers coins. Booking it like a US equity assignment would
+// invent a coin position we never received AND understate the loss (the equity
+// path defers the markdown into the assigned stock's cost basis, which only
+// works because real shares actually arrive).
+describe("settle — cash-settled (European) CSP", () => {
+  it("ITM realizes the intrinsic loss immediately instead of assigning units", () => {
+    // ETH put K1700, premium $27, spot $1600 at expiry, 1-coin contract.
+    const r = settle("csp", 1700, 27, 1600, 1, 1, undefined, 0, true);
+    expect(r.status).toBe("assigned");
+    // credit 27 − intrinsic (1700−1600)×1 = 100 → −73
+    expect(r.realizedPnl).toBeCloseTo(27 - 100, 6);
+    // No coins delivered → nothing for the wheel to hold or write calls against.
+    expect(r.assignedUnits).toBeUndefined();
+    expect(r.newCostBasis).toBeUndefined();
+  });
+
+  it("OTM is identical to the physical path — premium kept in full", () => {
+    const r = settle("csp", 1700, 27, 1800, 1, 1, undefined, 0, true);
+    expect(r.status).toBe("expired_worthless");
+    expect(r.realizedPnl).toBeCloseTo(27, 6);
+  });
+
+  it("physically-settled CSP is unchanged: premium only, basis carried on the shares", () => {
+    // Same inputs, cashSettled=false — proves the new flag is what changes behavior.
+    const r = settle("csp", 1700, 27, 1600, 1, 1, undefined, 0, false);
+    expect(r.status).toBe("assigned");
+    expect(r.realizedPnl).toBeCloseTo(27, 6); // NOT −73
+    expect(r.assignedUnits).toBe(1);
+    expect(r.newCostBasis).toBe(1700);
+  });
+});
+
+// The model fallback (used when the real chain is unavailable) had the same
+// hardcoded 100-share contract as engine.ts did. Left unfixed, an ETH put would
+// price its collateral 100× too high here and get rejected as "unaffordable"
+// whenever Deribit's expiry window was empty — a silent, misattributed skip.
+describe("selectCSP — contract size", () => {
+  const cfg = {
+    targetDelta: 22, dteMin: 14, dteMax: 30, riskFreeRate: 0.04, convictionThreshold: 70,
+    longPlayBudgetUsd: 200, collateralPerContractUsd: 500, pmccLeapsDelta: 80,
+    pmccLeapsDteMin: 180, pmccLeapsDteMax: 365, pmccBudgetUsd: 10000,
+    accountSizeUsd: 10000, wholeContracts: true, shortDteMin: 30, shortDteMax: 45,
+    pmccBudgetPct: 60, profitTakePct: 60, rollDte: 21, commissionPerContract: 0.65,
+    slippagePct: 3,
+  };
+
+  it("sizes a 1-coin crypto contract at strike × 1", () => {
+    const leg = selectCSP("ETH", 1854, 0.5, cfg, new Date(), 4910, 1);
+    expect(leg).not.toBeNull();
+    expect(leg!.multiplier).toBe(1);
+    expect(leg!.collateralUsd).toBeCloseTo(leg!.strike, 6);
+    expect(leg!.collateralUsd).toBeLessThan(4910); // affordable, as it should be
+  });
+
+  it("defaults to the 100-share equity contract when unspecified", () => {
+    const leg = selectCSP("F", 14.37, 0.4, cfg, new Date(), 4910);
+    expect(leg).not.toBeNull();
+    expect(leg!.multiplier).toBe(100);
+    expect(leg!.collateralUsd).toBeCloseTo(leg!.strike * 100, 6);
+  });
+
+  it("without the fix an ETH put reads as unaffordable — 100× its true collateral", () => {
+    // Same inputs, equity contract size: 1854-ish × 100 ≈ $170k > $4,910 → null.
+    expect(selectCSP("ETH", 1854, 0.5, cfg, new Date(), 4910, 100)).toBeNull();
   });
 });

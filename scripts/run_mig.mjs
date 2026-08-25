@@ -1,14 +1,35 @@
 import "dotenv/config";
 import { config } from "dotenv";
-config({ path: ".env.local" });
 import { neon } from "@neondatabase/serverless";
-import fs from "fs";
-if (!process.env.DATABASE_URL) { console.error("no DATABASE_URL"); process.exit(1); }
-const sql = neon(process.env.DATABASE_URL);
-const file = fs.readFileSync(process.argv[2], "utf8");
-const parts = file.split("--> statement-breakpoint").map(s=>s.trim()).filter(Boolean);
-for (const p of parts) {
-  console.log("running:", p.slice(0,80).replace(/\n/g," "));
-  try { await sql.query(p); console.log("ok"); } catch(e){ console.log("err:", e.message); }
+import {
+  executeMigration,
+  loadMigration,
+  verifyStrategyLedgerSchema,
+} from "./migration-utils.mjs";
+
+config({ path: ".env.local", override: false });
+
+function safeErrorMessage(error) {
+  if (error instanceof Error && error.message) return error.message;
+  return "unknown migration error";
 }
-console.log("done");
+
+async function main() {
+  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set");
+
+  const { statements } = loadMigration(process.argv[2]);
+  console.log(`applying ${statements.length} statements in one transaction`);
+
+  const sql = neon(process.env.DATABASE_URL);
+  await executeMigration(sql, statements);
+  await verifyStrategyLedgerSchema(sql);
+
+  console.log(`migration committed and verified (${statements.length}/${statements.length} statements)`);
+}
+
+try {
+  await main();
+} catch (error) {
+  console.error(`migration failed: ${safeErrorMessage(error)}`);
+  process.exitCode = 1;
+}

@@ -2,7 +2,8 @@ import "server-only";
 import { eq, and, isNotNull } from "drizzle-orm";
 import { db } from "@/db/client";
 import { ai_options_positions, ai_options_wheel } from "@/db/schema";
-import { AlpacaBroker } from "./alpaca";
+import type { OptionsStrategyContext } from "../strategy-context";
+import { appendOptionLifecycle } from "../strategy-ledger";
 import type { OptionsBroker } from "./broker";
 
 // Real assignment/exercise/expiration handling for LIVE positions
@@ -33,7 +34,8 @@ export type LiveSettlement =
 export async function syncLiveSettlements(
   userId: string,
   cfg: { wholeContracts: boolean; commissionPerContract: number },
-  broker: OptionsBroker = new AlpacaBroker()
+  broker: OptionsBroker,
+  context: OptionsStrategyContext,
 ): Promise<LiveSettlement[]> {
   const liveOpen = await db
     .select()
@@ -69,12 +71,37 @@ export async function syncLiveSettlements(
     const fees = cfg.wholeContracts ? cfg.commissionPerContract * pos.contracts : 0;
     const strike = parseFloat(pos.strike);
 
+    const activityId = `${activity.activityType}:${activity.contractSymbol}:${activity.date}:${activity.qty}`;
+
     if (activity.activityType === "OPEXP") {
       const realizedPnl = credit - fees;
+      await appendOptionLifecycle(userId, context, {
+        actionId: `lifecycle:${pos.id}:${activityId}`,
+        eventAt: now,
+        symbol: pos.contract_symbol,
+        side: "expiration",
+        quantity: activity.qty,
+        grossAmount: credit,
+        fees,
+        brokerReference: pos.broker_order_id,
+        detail: { positionId: pos.id, activity, outcome: "expired_worthless", realizedPnl },
+      });
       await db.update(ai_options_positions).set({ status: "expired_worthless", realized_pnl: realizedPnl.toFixed(2), exit_reason: "expiry", settled_at: now }).where(eq(ai_options_positions.id, pos.id));
       results.push({ positionId: pos.id, underlying: pos.underlying, strategy: pos.strategy as "csp", outcome: "expired_worthless", realizedPnl });
     } else if (activity.activityType === "OPASN" && pos.strategy === "csp") {
       const realizedPnl = credit - fees;
+      await appendOptionLifecycle(userId, context, {
+        actionId: `lifecycle:${pos.id}:${activityId}`,
+        eventAt: now,
+        symbol: pos.contract_symbol,
+        side: "assignment",
+        quantity: activity.qty,
+        price: strike,
+        grossAmount: credit - strike * multiplier * pos.contracts,
+        fees,
+        brokerReference: pos.broker_order_id,
+        detail: { positionId: pos.id, activity, outcome: "assigned", realizedPnl },
+      });
       await db.update(ai_options_positions).set({ status: "assigned", realized_pnl: realizedPnl.toFixed(2), exit_reason: "assigned_early", settled_at: now }).where(eq(ai_options_positions.id, pos.id));
       await db.insert(ai_options_wheel).values({ user_id: userId, underlying: pos.underlying, state: "holding_stock", shares: String(multiplier * pos.contracts), cost_basis: String(strike), updated_at: now })
         .onConflictDoUpdate({ target: [ai_options_wheel.user_id, ai_options_wheel.underlying], set: { state: "holding_stock", shares: String(multiplier * pos.contracts), cost_basis: String(strike), updated_at: now } });
@@ -84,6 +111,18 @@ export async function syncLiveSettlements(
       const costBasis = wheelRow[0]?.cost_basis != null ? parseFloat(wheelRow[0].cost_basis) : null;
       const capitalGain = costBasis != null ? (strike - costBasis) * multiplier * pos.contracts : 0;
       const realizedPnl = credit + capitalGain - fees;
+      await appendOptionLifecycle(userId, context, {
+        actionId: `lifecycle:${pos.id}:${activityId}`,
+        eventAt: now,
+        symbol: pos.contract_symbol,
+        side: "call_away",
+        quantity: activity.qty,
+        price: strike,
+        grossAmount: credit + strike * multiplier * pos.contracts,
+        fees,
+        brokerReference: pos.broker_order_id,
+        detail: { positionId: pos.id, activity, outcome: "called_away", capitalGain, realizedPnl },
+      });
       await db.update(ai_options_positions).set({ status: "called_away", realized_pnl: realizedPnl.toFixed(2), exit_reason: "assigned_early", settled_at: now }).where(eq(ai_options_positions.id, pos.id));
       await db.insert(ai_options_wheel).values({ user_id: userId, underlying: pos.underlying, state: "cash", shares: "0", cost_basis: null, updated_at: now })
         .onConflictDoUpdate({ target: [ai_options_wheel.user_id, ai_options_wheel.underlying], set: { state: "cash", shares: "0", cost_basis: null, updated_at: now } });
