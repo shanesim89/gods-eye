@@ -76,19 +76,11 @@ export function formatPortfolioDigest(
     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
   ];
 
-  const active = bots.filter((bot) => bot.health !== "off");
-  for (const bot of active) {
+  for (const bot of bots) {
     lines.push("");
     lines.push(...(bot.mode === "LIVE" ? formatLiveBot(bot) : formatPaperBot(bot)));
     const extra = context.liveLines?.[bot.key];
     if (extra) lines.push(...extra);
-  }
-
-  const benched = bots.filter((bot) => bot.health === "off");
-  if (benched.length > 0) {
-    lines.push("");
-    lines.push(`⚪ OFF / BENCHED: ${benched.map((bot) => bot.label).join(" · ")}`);
-    lines.push("Disabled on purpose · excluded from fleet accounting and incident alerts");
   }
 
   return lines.join("\n");

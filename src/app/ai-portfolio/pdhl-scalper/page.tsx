@@ -57,20 +57,9 @@ export default async function PDHLScalperPage() {
       title="PDH/PDL SCALPER"
       meta={`PAPER · DAILY BREAK+RETEST · ${state.version ?? "pdhl-v1"}`}
     >
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3 text-[11px]">
-        <div className="border border-green/40 bg-green/5 px-3 py-2">
-          <div className="text-green uppercase tracking-[1px]">● DAILY · PAPER ACTIVE</div>
-          <div className="text-dim mt-1">Portfolio accounting enabled</div>
-        </div>
-        {[
-          ["4H", "gold:pdhl:4h:state"],
-          ["8H", "gold:pdhl:8h:state"],
-        ].map(([period, key]) => (
-          <div key={period} className="border border-border bg-grid px-3 py-2">
-            <div className="text-dim uppercase tracking-[1px]">○ {period} · OFF · BENCHED</div>
-            <div className="text-dim mt-1" title={key}>Excluded from fleet accounting</div>
-          </div>
-        ))}
+      <div className="border border-green/40 bg-green/5 px-3 py-2 mb-3 text-[11px]">
+        <div className="text-green uppercase tracking-[1px]">● DAILY · PAPER ACTIVE</div>
+        <div className="text-dim mt-1">Portfolio accounting enabled</div>
       </div>
       <PDHLLive initial={state} />
     </Panel>

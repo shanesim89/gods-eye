@@ -79,7 +79,7 @@ const DASHBOARDS: Dashboard[] = [
   {
     href: "/ai-portfolio/pdhl-scalper",
     label: "PDH/PDL SCALPER",
-    desc: "Daily break+retest is paper-active. 4H and 8H variants are OFF · BENCHED.",
+    desc: "Daily XAUUSD break+retest strategy — paper-forward.",
     badge: "PAPER",
   },
 ];
@@ -95,7 +95,6 @@ export default async function AiPortfolioPage() {
   const { status: infra, ageMin } = await getInfraStatus();
   const infraUp = infra != null && ageMin != null && ageMin < 10;
   const services = infra ? Object.entries(infra.services) : [];
-  const benchedServices = services.filter(([name]) => isBenchedService(name));
   const activeServices = services.filter(([name]) => !isBenchedService(name));
   const healthyCount = activeServices.filter(([, ok]) => ok).length;
   const downServices = activeServices.filter(([, ok]) => !ok);
@@ -126,11 +125,6 @@ export default async function AiPortfolioPage() {
                   </span>
                 )}
               </span>
-              {benchedServices.length > 0 && (
-                <span className="text-dim">
-                  {benchedServices.length} OFF · BENCHED
-                </span>
-              )}
               <span className="text-dim">checked {ageMin!.toFixed(1)}m ago</span>
             </>
           )}

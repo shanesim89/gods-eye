@@ -1,20 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { accountingBots, fleetBookValue, fleetPnl } from "./fleet";
+import { fleetBookValue, fleetPnl } from "./fleet";
 
 const bots = [
   { key: "crypto", health: "ok", equityOrValue: 12_000, pnl: 500 },
   { key: "gold", health: "stale", equityOrValue: 10_100, pnl: 100 },
-  { key: "pdhl4h", health: "off", equityOrValue: 99_999, pnl: 9_999 },
+  { key: "pdhl", health: "halt", equityOrValue: 9_900, pnl: -50 },
 ];
 
 describe("AI portfolio fleet accounting", () => {
-  it("keeps unhealthy active bots while excluding intentionally off bots", () => {
-    expect(accountingBots(bots).map((bot) => bot.key)).toEqual(["crypto", "gold"]);
-  });
-
-  it("excludes intentionally off bot equity and P/L", () => {
-    expect(fleetBookValue(bots)).toBe(22_100);
-    expect(fleetPnl(bots)).toBe(600);
+  it("includes active bots regardless of health state", () => {
+    expect(fleetBookValue(bots)).toBe(32_000);
+    expect(fleetPnl(bots)).toBe(550);
   });
 
   it("ignores non-finite book values", () => {

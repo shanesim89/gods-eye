@@ -40,7 +40,6 @@ export const healthColor: Record<string, string> = {
   warn: "text-amber",
   halt: "text-red",
   stale: "text-red",
-  off: "text-dim",
 };
 
 export const healthDot: Record<string, string> = {
@@ -48,5 +47,4 @@ export const healthDot: Record<string, string> = {
   warn: "bg-amber",
   halt: "bg-red",
   stale: "bg-red",
-  off: "bg-dim",
 };

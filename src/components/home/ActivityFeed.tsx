@@ -20,8 +20,6 @@ const BOT_COLOR: Record<string, string> = {
   quant: "text-amber",
   gold: "text-cyan",
   pdhl: "text-cyan",
-  pdhl4h: "text-cyan",
-  pdhl8h: "text-cyan",
 };
 
 function matches(row: HomeActivityRow, f: Filter): boolean {

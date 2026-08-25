@@ -202,7 +202,7 @@ export const daily_pnl = pgTable(
   {
     user_id: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
     day: date("day").notNull(),
-    bot: text("bot").notNull(), // crypto|options|quant|gold|pdhl|pdhl4h|pdhl8h
+    bot: text("bot").notNull(), // crypto|options|quant|gold|pdhl
     realized_pnl: numeric("realized_pnl", { precision: 18, scale: 2 }),
     return_pct: numeric("return_pct", { precision: 10, scale: 4 }),
     activity_count: integer("activity_count").default(0).notNull(),

@@ -38,34 +38,16 @@ describe("portfolio Telegram digest", () => {
     expect(text).not.toContain("LIVE: GOLD SCALPER");
   });
 
-  it("mentions benched variants neutrally without financial state", () => {
+  it("does not append a benched-bot section", () => {
     const text = formatPortfolioDigest([
+      bot({ key: "crypto", label: "CRYPTO DCA", mode: "LIVE", valueLabel: "Holdings" }),
+      bot({ key: "gold", label: "GOLD SCALPER" }),
       bot({ key: "pdhl", label: "PDH/PDL DAILY" }),
-      bot({
-        key: "pdhl4h",
-        label: "PDH/PDL 4H",
-        health: "off",
-        equityOrValue: 88_888,
-        pnl: 8_888,
-        healthNote: "benched — disabled on purpose",
-      }),
-      bot({
-        key: "pdhl8h",
-        label: "PDH/PDL 8H",
-        health: "off",
-        equityOrValue: 77_777,
-        pnl: 7_777,
-      }),
+      bot({ key: "quant", label: "QUANT SCALPER" }),
+      bot({ key: "options", label: "OPTIONS WHEEL" }),
     ], "Tue, Aug 25, 2026");
 
-    expect(text).toContain("⚪ OFF / BENCHED: PDH/PDL 4H · PDH/PDL 8H");
-    expect(text).toContain("excluded from fleet accounting and incident alerts");
-    expect(text).not.toContain("$88,888");
-    expect(text).not.toContain("$77,777");
-    expect(text).not.toContain("$8,888");
-    expect(text).not.toContain("$7,777");
-    expect(text).not.toContain("PAPER: PDH/PDL 4H");
-    expect(text).not.toContain("PAPER: PDH/PDL 8H");
+    expect(text).not.toContain("OFF / BENCHED");
   });
 
   it("preserves optional live-bot operational context", () => {

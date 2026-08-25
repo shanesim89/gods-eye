@@ -14,7 +14,7 @@ import { computeDailyRows } from "@/lib/trading/daily-snapshot";
 import { getPrice } from "@/lib/market";
 import { getOrCreateSettings } from "@/lib/trading/settings";
 import { getOrCreateOptionsSettings, type Underlying } from "@/lib/options/settings";
-import { accountingBots, fleetBookValue, fleetPnl } from "@/lib/ai-portfolio/fleet";
+import { fleetBookValue, fleetPnl } from "@/lib/ai-portfolio/fleet";
 
 export type ActivityTone = "buy" | "sell" | "skip" | "info" | "error";
 export type ActivityRow = {
@@ -29,10 +29,8 @@ export type HoldingRow = {
   value?: number;        // USD value where meaningful
   pnl?: number | null;   // USD P/L where meaningful
 };
-export type BotHealth = "ok" | "warn" | "halt" | "stale" | "off";
-export type BotKey =
-  | "crypto" | "options" | "quant" | "gold"
-  | "pdhl" | "pdhl4h" | "pdhl8h";
+export type BotHealth = "ok" | "warn" | "halt" | "stale";
+export type BotKey = "crypto" | "options" | "quant" | "gold" | "pdhl";
 export type BotStatus = {
   key: BotKey;
   label: string;
@@ -406,23 +404,8 @@ async function goldStatus(): Promise<BotStatus> {
   };
 }
 
-// One PDHL status per period — daily/4H/8H bots publish to separate Neon keys.
-const PDHL_VARIANTS: Record<"pdhl" | "pdhl4h" | "pdhl8h", { cacheKey: string; label: string }> = {
-  pdhl:   { cacheKey: "gold:pdhl:state",     label: "PDH/PDL DAILY" },
-  pdhl4h: { cacheKey: "gold:pdhl:4h:state",  label: "PDH/PDL 4H" },
-  pdhl8h: { cacheKey: "gold:pdhl:8h:state",  label: "PDH/PDL 8H" },
-};
-
-// 4H/8H systemd units are deliberately `disabled` (benched per the goldscalp
-// strategy audit — shared-params bleed, not a bug). Nothing has published to
-// their Neon keys since, and nothing will until Shane re-enables them — so
-// treat them as intentionally "off" rather than ever computing "stale" and
-// putting them in the ATTENTION banner next to bots that are actually broken.
-const BENCHED_PDHL = new Set<"pdhl" | "pdhl4h" | "pdhl8h">(["pdhl4h", "pdhl8h"]);
-
-async function pdhlStatus(variant: "pdhl" | "pdhl4h" | "pdhl8h" = "pdhl"): Promise<BotStatus> {
-  const { cacheKey, label } = PDHL_VARIANTS[variant];
-  const row = await cacheStatus(cacheKey);
+async function pdhlStatus(): Promise<BotStatus> {
+  const row = await cacheStatus("gold:pdhl:state");
   const p = (row?.payload as PDHLPayload) ?? {};
   const start = p.starting_balance ?? 10000;
   const equity = p.equity ?? start;
@@ -437,8 +420,7 @@ async function pdhlStatus(variant: "pdhl" | "pdhl4h" | "pdhl8h" = "pdhl"): Promi
   const inSession = oandaOpen2 && utcHour2 >= 7 && utcHour2 < 21;
   let health: BotHealth = "ok";
   let healthNote: string | undefined;
-  if (BENCHED_PDHL.has(variant)) { health = "off"; healthNote = "benched — disabled on purpose"; }
-  else if (!row) { health = "stale"; healthNote = "never published"; }
+  if (!row) { health = "stale"; healthNote = "never published"; }
   else if ((p.circuit_state ?? "NORMAL") !== "NORMAL" && p.circuit_state !== "RESUME") { health = "halt"; healthNote = `circuit ${p.circuit_state}`; }
   else if (inSession && ageMin > 15) { health = "stale"; healthNote = `poller stale ${Math.round(ageMin)}m`; }
 
@@ -458,44 +440,40 @@ async function pdhlStatus(variant: "pdhl" | "pdhl4h" | "pdhl8h" = "pdhl"): Promi
   }));
 
   const sess = p.session;
-  const benched = health === "off";
   return {
-    key: variant,
-    label,
+    key: "pdhl",
+    label: "PDH/PDL DAILY",
     href: "/ai-portfolio/pdhl-scalper",
     mode: "PAPER",
     asset: "XAUUSD",
-    equityOrValue: benched ? 0 : equity,
-    valueLabel: benched ? "Benched" : "Paper equity",
-    pnl: benched ? null : pnl,
-    pnlPct: benched || start <= 0 ? null : (pnl / start) * 100,
+    equityOrValue: equity,
+    valueLabel: "Paper equity",
+    pnl,
+    pnlPct: start > 0 ? (pnl / start) * 100 : null,
     health,
     healthNote,
-    lastActivity: benched ? null : p.last_run ?? (fetchedAt ? new Date(fetchedAt).toISOString() : null),
-    holdings: benched ? [] : holdings,
-    recent: benched ? [] : recent,
-    fallbackNote: benched
-      ? "Disabled on purpose — retained for visibility, excluded from fleet accounting."
-      : recent.length === 0
+    lastActivity: p.last_run ?? (fetchedAt ? new Date(fetchedAt).toISOString() : null),
+    holdings,
+    recent,
+    fallbackNote:
+      recent.length === 0
         ? pos
           ? "Break+retest trade open — no closed trades in last 24h."
           : `FLAT — waiting for PDH/PDL break+retest${sess ? ` · today ${sess.trades} trades` : ""}.`
         : undefined,
-    openPositions: benched ? 0 : pos ? 1 : 0,
+    openPositions: pos ? 1 : 0,
   };
 }
 
 export async function getBotOverview(userId: string): Promise<BotStatus[]> {
-  const [crypto, options, quant, gold, pdhl, pdhl4h, pdhl8h] = await Promise.all([
+  const [crypto, options, quant, gold, pdhl] = await Promise.all([
     cryptoStatus(userId).catch((e) => errorStatus("crypto", e)),
     optionsStatus(userId).catch((e) => errorStatus("options", e)),
     quantStatus().catch((e) => errorStatus("quant", e)),
     goldStatus().catch((e) => errorStatus("gold", e)),
     pdhlStatus().catch((e) => errorStatus("pdhl", e)),
-    pdhlStatus("pdhl4h").catch((e) => errorStatus("pdhl4h", e)),
-    pdhlStatus("pdhl8h").catch((e) => errorStatus("pdhl8h", e)),
   ]);
-  return [crypto, options, quant, gold, pdhl, pdhl4h, pdhl8h];
+  return [crypto, options, quant, gold, pdhl];
 }
 
 // ── 30-day P/L calendar ──────────────────────────────────────────────────────
@@ -590,7 +568,7 @@ export type HomeState = {
   hero: {
     totalBook: number;      // live holdings value + paper equities
     todayPnl: number;       // sum of last-24h realized PnL visible in activity
-    ok: number; warn: number; halt: number; stale: number; off: number;
+    ok: number; warn: number; halt: number; stale: number;
   };
   alerts: string[];         // urgent red-banner lines (bot alerts + health issues)
   activity: HomeActivityRow[]; // merged 48h feed, newest first
@@ -604,26 +582,22 @@ export async function buildHomeState(userId: string): Promise<HomeState> {
     console.error("[overview] daily calendar failed:", e instanceof Error ? e.message : e);
     return [] as DailyCell[];
   });
-  const [crypto, options, quant, gold, pdhl, pdhl4h, pdhl8h] = await Promise.all([
+  const [crypto, options, quant, gold, pdhl] = await Promise.all([
     cryptoStatus(userId).catch((e) => errorStatus("crypto", e)),
     optionsStatus(userId).catch((e) => errorStatus("options", e)),
     quantStatus().catch((e) => errorStatus("quant", e)),
     goldStatus().catch((e) => errorStatus("gold", e)),
-    pdhlStatus("pdhl").catch((e) => errorStatus("pdhl", e)),
-    pdhlStatus("pdhl4h").catch((e) => errorStatus("pdhl4h", e)),
-    pdhlStatus("pdhl8h").catch((e) => errorStatus("pdhl8h", e)),
+    pdhlStatus().catch((e) => errorStatus("pdhl", e)),
   ]);
 
   const live = [crypto];
-  const paper = [gold, pdhl, pdhl4h, pdhl8h, quant, options];
+  const paper = [gold, pdhl, quant, options];
   const visible = [...live, ...paper];
-  const active = accountingBots(visible);
-  const activePaper = accountingBots(paper);
 
-  const totalBook = fleetBookValue(active);
+  const totalBook = fleetBookValue(visible);
 
   const cutoff = Date.now() - 2 * DAY_MS;
-  const activity: HomeActivityRow[] = active
+  const activity: HomeActivityRow[] = visible
     .flatMap((b) => b.recent.map((r) => ({ ...r, bot: b.key, botLabel: b.label })))
     .filter((r) => {
       const t = new Date(r.ts).getTime();
@@ -636,13 +610,13 @@ export async function buildHomeState(userId: string): Promise<HomeState> {
   // from session pnl where present is bot-specific, so use the simple honest sum
   // of each bot's pnl exposed today — crypto uses holdings pnl (all-time), so
   // exclude it and label the tile PAPER P/L + live P/L separately in the UI.
-  const todayPnl = fleetPnl(activePaper);
+  const todayPnl = fleetPnl(paper);
 
-  const counts = { ok: 0, warn: 0, halt: 0, stale: 0, off: 0 };
+  const counts = { ok: 0, warn: 0, halt: 0, stale: 0 };
   for (const b of visible) counts[b.health] += 1;
 
   const alerts: string[] = [];
-  for (const b of active) {
+  for (const b of visible) {
     if (b.alert) alerts.push(`${b.label}: ${b.alert}`);
     else if (b.health === "halt") alerts.push(`${b.label}: ${b.healthNote ?? "halted"}`);
     else if (b.health === "stale") alerts.push(`${b.label}: ${b.healthNote ?? "stale"}`);
@@ -668,8 +642,6 @@ function errorStatus(key: BotKey, err: unknown): BotStatus {
     quant: { label: "QUANT SCALPER", href: "/ai-portfolio/quant-scalper", mode: "PAPER", asset: "BTC·ETH·BNB +" },
     gold: { label: "GOLD SCALPER", href: "/ai-portfolio/gold-scalper", mode: "PAPER", asset: "XAUUSD" },
     pdhl: { label: "PDH/PDL DAILY", href: "/ai-portfolio/pdhl-scalper", mode: "PAPER", asset: "XAUUSD" },
-    pdhl4h: { label: "PDH/PDL 4H", href: "/ai-portfolio/pdhl-scalper", mode: "PAPER", asset: "XAUUSD" },
-    pdhl8h: { label: "PDH/PDL 8H", href: "/ai-portfolio/pdhl-scalper", mode: "PAPER", asset: "XAUUSD" },
   };
   const m = meta[key];
   console.error(`[overview] ${key} failed:`, err instanceof Error ? err.message : err);

@@ -28,7 +28,6 @@ export function HeroStrip({ hero, alerts, liveValue }: {
         <div className="text-dim text-[10px] uppercase tracking-[1.5px]">Fleet health</div>
         <div className="text-[18px] tabular-nums">
           <span className="text-green">{hero.ok} OK</span>
-          {hero.off > 0 && <span className="text-dim"> · {hero.off} OFF</span>}
           {issues > 0 && (
             <span className="text-amber"> · {issues} {hero.halt > 0 ? "HALT" : hero.stale > 0 ? "STALE" : "WARN"}</span>
           )}
