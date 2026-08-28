@@ -212,6 +212,7 @@ function baseSettings(overrides: Partial<Row> = {}): Row {
     whole_contracts: false,
     profit_take_pct: 60,
     roll_dte: 21,
+    defensive_roll_delta: 40,
     short_dte_min: 30,
     short_dte_max: 45,
     pmcc_budget_pct: 60,
@@ -948,6 +949,52 @@ describe("manageOptionsPositionsForUser — daily position management", () => {
     const out = await manageOptionsPositionsForUser(USER);
     expect(out.find((o) => o.action === "roll" && o.detail?.tested === true)).toBeTruthy();
     expect(store().ai_options_positions[0].status).toBe("closed");
+  });
+
+  it("rolls a short call early once delta breaches the defensive threshold, before spot crosses the strike", async () => {
+    store().ai_options_settings.push(baseSettings({ defensive_roll_delta: 40 }));
+    store().ai_options_wheel.push(wheelRow("SPY", { state: "holding_stock", shares: "1", cost_basis: "500" }));
+    store().ai_options_positions.push(
+      positionRow({
+        strategy: "cc",
+        strike: "500",
+        opt_type: "C",
+        entry_premium: "5",
+        expiry: new Date(Date.now() + 60 * 86_400_000), // far from roll_dte(21) — only delta should trigger this
+        contract_multiplier: "1",
+        status: "open",
+      })
+    );
+    getPrice.mockResolvedValue({ price: 495 }); // still OTM — not tested
+    getPriceHistory.mockResolvedValue(Array.from({ length: 30 }, (_, i) => 495 * (1 + 0.03 * (i % 2 === 0 ? 1 : -1)))); // real vol, pushes delta > 0.40
+
+    const out = await manageOptionsPositionsForUser(USER);
+    const rolled = out.find((o) => o.action === "roll");
+    expect(rolled).toBeTruthy();
+    expect(rolled?.detail?.tested).toBe(false);
+    expect(rolled?.detail?.deltaBreach).toBe(true);
+    expect(store().ai_options_positions[0].status).toBe("closed");
+  });
+
+  it("does not roll early when delta stays below the defensive threshold and spot/DTE conditions aren't met", async () => {
+    store().ai_options_settings.push(baseSettings({ defensive_roll_delta: 40 }));
+    store().ai_options_wheel.push(wheelRow("SPY", { state: "holding_stock", shares: "1", cost_basis: "500" }));
+    store().ai_options_positions.push(
+      positionRow({
+        strategy: "cc",
+        strike: "500",
+        opt_type: "C",
+        entry_premium: "5",
+        expiry: new Date(Date.now() + 60 * 86_400_000),
+        contract_multiplier: "1",
+        status: "open",
+      })
+    );
+    getPrice.mockResolvedValue({ price: 400 }); // deep OTM — low delta
+    getPriceHistory.mockResolvedValue(Array.from({ length: 30 }, () => 400)); // near-zero vol
+
+    const out = await manageOptionsPositionsForUser(USER);
+    expect(out.find((o) => o.action === "roll")).toBeFalsy();
   });
 
   it("early-assignment heuristic fires at realistic SPY-scale strikes/DTE (regression: was unreachable above ~$50 strike with the old flat $0.05 threshold)", async () => {

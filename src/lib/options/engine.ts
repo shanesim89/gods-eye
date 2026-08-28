@@ -1854,12 +1854,17 @@ export async function manageOptionsPositionsForUser(userId: string): Promise<Man
         continue;
       }
 
-      // 3. Roll: tested (spot through the strike) or inside the gamma window.
+      // 3. Roll: tested (spot through the strike), inside the gamma window, or
+      //    delta has climbed past the defensive threshold — catches a fast
+      //    rally BEFORE it fully crosses the strike, so a single roll doesn't
+      //    eat one huge realized loss on a gap day.
       const tested = optType === "C" ? mkt.spot > strike : mkt.spot < strike;
-      if (tested || dte <= cfg.rollDte) {
-        if (!(await claim(pos, "roll", { tested, dte, spot: mkt.spot, strike }))) continue;
+      const deltaBreach = Math.abs(bsGreeks({ type: optType, S: mkt.spot, K: strike, t, r: cfg.riskFreeRate, sigma: mkt.sigma }).delta)
+        >= settings.defensive_roll_delta / 100;
+      if (tested || dte <= cfg.rollDte || deltaBreach) {
+        if (!(await claim(pos, "roll", { tested, dte, deltaBreach, spot: mkt.spot, strike }))) continue;
         const realized = await closeShort(pos, current, "roll");
-        outcomes.push({ underlying: pos.underlying, action: "roll", detail: { realized, tested, dte } });
+        outcomes.push({ underlying: pos.underlying, action: "roll", detail: { realized, tested, dte, deltaBreach } });
         if (pos.strategy === "pmcc_short") {
           const sym = await reshort(pos, mkt.spot, mkt.sigma);
           if (sym) outcomes.push({ underlying: pos.underlying, action: "reshort", detail: { contractSymbol: sym } });

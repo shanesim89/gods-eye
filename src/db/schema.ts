@@ -466,6 +466,7 @@ export const ai_options_settings = pgTable("ai_options_settings", {
   whole_contracts: boolean("whole_contracts").default(false).notNull(), // 1 contract = 100 shares, no fractional multipliers
   profit_take_pct: integer("profit_take_pct").default(60).notNull(), // close short at % of max profit
   roll_dte: integer("roll_dte").default(21).notNull(), // roll/close short at this DTE
+  defensive_roll_delta: integer("defensive_roll_delta").default(40).notNull(), // 0.40 — roll short leg early once delta climbs this high, before spot fully crosses the strike (caps single-day realized-loss size on fast rallies)
   short_dte_min: integer("short_dte_min").default(30).notNull(), // PMCC short-leg window (separate from CSP dte)
   short_dte_max: integer("short_dte_max").default(45).notNull(),
   pmcc_budget_pct: integer("pmcc_budget_pct").default(60).notNull(), // LEAPS debit ≤ % of account
