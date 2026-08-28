@@ -11,9 +11,11 @@ ALTER TABLE "ai_options_settings"
   ADD COLUMN IF NOT EXISTS "broker_account_fingerprint" text,
   ADD COLUMN IF NOT EXISTS "reconciliation_max_age_seconds" integer NOT NULL DEFAULT 300,
   ADD COLUMN IF NOT EXISTS "allocated_marked_nlv_limit_usd" numeric(18, 2) NOT NULL DEFAULT '6000';
+--> statement-breakpoint
 
 ALTER TABLE "ai_options_settings"
   ALTER COLUMN "max_collateral_usd" SET DEFAULT '6000';
+--> statement-breakpoint
 
 DO $$
 BEGIN
