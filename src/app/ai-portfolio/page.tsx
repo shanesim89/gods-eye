@@ -4,6 +4,7 @@ import { Panel } from "@/components/ui/Panel";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/db/client";
 import { market_data_cache } from "@/db/schema";
+import { ACTIVE_STRATEGIES, isRetiredInfraService } from "@/lib/ai-portfolio/registry";
 
 export const dynamic = "force-dynamic";
 
@@ -15,27 +16,11 @@ type InfraStatus = {
   generated_at: string;
 };
 
-type Dashboard = {
-  href: string | null;
-  label: string;
-  desc: string;
-  badge: "LIVE" | "PAPER" | "SOON";
-};
-
 function fmtUptime(sec: number): string {
   const d = Math.floor(sec / 86400);
   const h = Math.floor((sec % 86400) / 3600);
   const m = Math.floor((sec % 3600) / 60);
   return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
-
-function isBenchedService(name: string): boolean {
-  const normalized = name.toLowerCase().replace(/[^a-z0-9]/g, "");
-  return (
-    (normalized.includes("pdhl4h") || normalized.includes("pdhl8h")) ||
-    ((normalized.includes("pdhpdl") || normalized.includes("pdhl")) &&
-      (normalized.includes("4h") || normalized.includes("8h")))
-  );
 }
 
 async function getInfraStatus(): Promise<{ status: InfraStatus | null; ageMin: number | null }> {
@@ -49,53 +34,17 @@ async function getInfraStatus(): Promise<{ status: InfraStatus | null; ageMin: n
   return { status: rows[0].payload as InfraStatus, ageMin };
 }
 
-const DASHBOARDS: Dashboard[] = [
-  {
-    href: "/ai-portfolio/crypto",
-    label: "CRYPTO",
-    desc: "BTC · ETH · SOL · HYPE — live bi-weekly DCA + council buy-zone boost.",
-    badge: "LIVE",
-  },
-  { href: null, label: "ETF / UNIT TRUST", desc: "Coming soon", badge: "SOON" },
-  { href: null, label: "STOCKS", desc: "Coming soon", badge: "SOON" },
-  {
-    href: "/ai-portfolio/options",
-    label: "OPTIONS",
-    desc: "The Wheel + council long plays — paper trading. Defined-risk income.",
-    badge: "PAPER",
-  },
-  {
-    href: "/ai-portfolio/quant-scalper",
-    label: "QUANT SCALPER",
-    desc: "Paper-forward research-gated quant bot — TSMOM BTC/ETH/BNB.",
-    badge: "PAPER",
-  },
-  {
-    href: "/ai-portfolio/gold-scalper",
-    label: "GOLD PRINTING MACHINES",
-    desc: "XAUUSD long+short 1m session-VWAP fade — paper-forward and self-tuning.",
-    badge: "PAPER",
-  },
-  {
-    href: "/ai-portfolio/pdhl-scalper",
-    label: "PDH/PDL SCALPER",
-    desc: "Daily XAUUSD break+retest strategy — paper-forward.",
-    badge: "PAPER",
-  },
-];
-
-const badgeClass: Record<Dashboard["badge"], string> = {
+const badgeClass = {
   LIVE: "border-green/50 text-green",
   PAPER: "border-amber/50 text-amber",
-  SOON: "border-border text-dim",
-};
+} as const;
 
 export default async function AiPortfolioPage() {
   await requireUser();
   const { status: infra, ageMin } = await getInfraStatus();
   const infraUp = infra != null && ageMin != null && ageMin < 10;
   const services = infra ? Object.entries(infra.services) : [];
-  const activeServices = services.filter(([name]) => !isBenchedService(name));
+  const activeServices = services.filter(([name]) => !isRetiredInfraService(name));
   const healthyCount = activeServices.filter(([, ok]) => ok).length;
   const downServices = activeServices.filter(([, ok]) => !ok);
 
@@ -144,33 +93,25 @@ export default async function AiPortfolioPage() {
         </div>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {DASHBOARDS.map((d) => {
-          const available = d.href != null;
-          const inner = (
-            <div
-              className={`border bg-grid p-4 h-full transition-colors ${
-                available ? "border-amber/40 hover:border-amber" : "border-border opacity-50"
-              }`}
-            >
+        {ACTIVE_STRATEGIES.map((strategy) => (
+          <Link key={strategy.key} href={strategy.href}>
+            <div className="border border-amber/40 hover:border-amber bg-grid p-4 h-full transition-colors">
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-amber font-bold tracking-[1px] text-[12px]">▸ {d.label}</span>
+                <span className="text-amber font-bold tracking-[1px] text-[12px]">
+                  ▸ {strategy.dashboardLabel}
+                </span>
                 <span
-                  className={`text-[9px] uppercase tracking-[1px] px-1.5 py-0.5 border ${badgeClass[d.badge]}`}
+                  className={`text-[9px] uppercase tracking-[1px] px-1.5 py-0.5 border ${badgeClass[strategy.mode]}`}
                 >
-                  {d.badge}
+                  {strategy.mode}
                 </span>
               </div>
-              <div className="text-muted text-[11px] leading-snug">{d.desc}</div>
+              <div className="text-muted text-[11px] leading-snug">
+                {strategy.description}
+              </div>
             </div>
-          );
-          return d.href ? (
-            <Link key={d.label} href={d.href}>
-              {inner}
-            </Link>
-          ) : (
-            <div key={d.label}>{inner}</div>
-          );
-        })}
+          </Link>
+        ))}
       </div>
     </Panel>
   );

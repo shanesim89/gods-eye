@@ -2,17 +2,12 @@ import { eq } from "drizzle-orm";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/db/client";
 import { market_data_cache } from "@/db/schema";
+import { ACTIVE_STATE_CACHE_KEYS } from "@/lib/ai-portfolio/registry";
 
 export const dynamic = "force-dynamic";
 
 // Only bot-state rows may be polled from the client — never an arbitrary cache key.
-const ALLOWED = new Set([
-  "gold:scalper:state",
-  "gold:pdhl:state",
-  "gold:pdhl:4h:state",
-  "gold:pdhl:8h:state",
-  "quant:scrap:state",
-]);
+const ALLOWED = new Set<string>(ACTIVE_STATE_CACHE_KEYS);
 
 export async function GET(
   _req: Request,

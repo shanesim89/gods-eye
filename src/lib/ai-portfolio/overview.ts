@@ -15,6 +15,13 @@ import { getPrice } from "@/lib/market";
 import { getOrCreateSettings } from "@/lib/trading/settings";
 import { getOrCreateOptionsSettings, type Underlying } from "@/lib/options/settings";
 import { fleetBookValue, fleetPnl } from "@/lib/ai-portfolio/fleet";
+import {
+  CALENDAR_STRATEGY_KEYS,
+  LIVE_STRATEGY_KEYS,
+  PAPER_STRATEGY_KEYS,
+  strategyDefinition,
+  type BotKey,
+} from "@/lib/ai-portfolio/registry";
 
 export type ActivityTone = "buy" | "sell" | "skip" | "info" | "error";
 export type ActivityRow = {
@@ -30,7 +37,7 @@ export type HoldingRow = {
   pnl?: number | null;   // USD P/L where meaningful
 };
 export type BotHealth = "ok" | "warn" | "halt" | "stale";
-export type BotKey = "crypto" | "options" | "quant" | "gold" | "pdhl";
+export type { BotKey } from "@/lib/ai-portfolio/registry";
 export type BotStatus = {
   key: BotKey;
   label: string;
@@ -66,32 +73,6 @@ type QuantPayload = {
   }[];
   last_run?: string | null;
 };
-type GoldPayload = {
-  equity?: number;
-  starting_balance?: number;
-  circuit_state?: string;
-  regime?: string;
-  open_position?: { direction: number; entry: number; size: number; stretch: number } | null;
-  session?: { trades: number; win_rate: number | null; profit_factor: number | null; pnl: number };
-  recent_trades?: {
-    exit: string; side: "LONG" | "SHORT"; entry: number; exit_px: number;
-    pnl: number; stretch: number; reason?: string;
-  }[];
-  last_run?: string | null;
-};
-type PDHLPayload = {
-  equity?: number;
-  starting_balance?: number;
-  circuit_state?: string;
-  open_position?: { direction: number; entry: number; level: number; size: number } | null;
-  session?: { trades: number; win_rate: number | null; profit_factor: number | null; pnl: number };
-  recent_trades?: {
-    exit: string; side: "LONG" | "SHORT"; entry: number; exit_px: number;
-    level: number; pnl: number; reason?: string;
-  }[];
-  last_run?: string | null;
-};
-
 async function cryptoStatus(userId: string): Promise<BotStatus> {
   // 48h window so a failed order from yesterday's cron still raises the alert
   // (this is real money — silent failures must surface on the homepage).
@@ -342,138 +323,13 @@ async function quantStatus(): Promise<BotStatus> {
   };
 }
 
-async function goldStatus(): Promise<BotStatus> {
-  const row = await cacheStatus("gold:scalper:state");
-  const p = (row?.payload as GoldPayload) ?? {};
-  const start = p.starting_balance ?? 10000;
-  const equity = p.equity ?? start;
-  const pnl = equity - start;
-  const fetchedAt = row?.fetched_at ?? null;
-  const ageMin = fetchedAt ? (Date.now() - new Date(fetchedAt).getTime()) / 60_000 : Infinity;
-
-  // Gold trades London+NY session 07:00–21:00 UTC, but OANDA closes Fri 21:00–Sun 21:00 UTC.
-  const _now = new Date();
-  const utcHour = _now.getUTCHours();
-  const utcDay  = _now.getUTCDay(); // 0=Sun, 6=Sat
-  const oandaOpen = !(utcDay === 6 || (utcDay === 0 && utcHour < 21) || (utcDay === 5 && utcHour >= 21));
-  const inSession = oandaOpen && utcHour >= 7 && utcHour < 21;
-  let health: BotHealth = "ok";
-  let healthNote: string | undefined;
-  if (!row) { health = "stale"; healthNote = "never published"; }
-  else if ((p.circuit_state ?? "NORMAL") !== "NORMAL" && p.circuit_state !== "RESUME") { health = "halt"; healthNote = `circuit ${p.circuit_state}`; }
-  else if (inSession && ageMin > 15) { health = "stale"; healthNote = `poller stale ${Math.round(ageMin)}m`; }
-
-  const pos = p.open_position;
-  const holdings: HoldingRow[] = pos
-    ? [{
-        label: pos.direction > 0 ? "LONG" : "SHORT",
-        detail: `entry $${pos.entry.toLocaleString("en-US")} · ${pos.stretch.toFixed(2)}σ · ${pos.size.toFixed(4)} oz`,
-      }]
-    : [];
-
-  const recent: ActivityRow[] = (p.recent_trades ?? []).slice(0, 12).map((t) => ({
-    ts: t.exit,
-    label: `XAUUSD ${t.side}`,
-    detail: `${t.entry.toLocaleString("en-US")} → ${t.exit_px.toLocaleString("en-US")} · ${t.stretch.toFixed(2)}σ${t.reason ? ` · ${t.reason}` : ""}`,
-    tone: t.pnl >= 0 ? "buy" : "sell",
-  }));
-
-  const sess = p.session;
-  return {
-    key: "gold",
-    label: "GOLD SCALPER",
-    href: "/ai-portfolio/gold-scalper",
-    mode: "PAPER",
-    asset: "XAUUSD",
-    equityOrValue: equity,
-    valueLabel: "Paper equity",
-    pnl,
-    pnlPct: start > 0 ? (pnl / start) * 100 : null,
-    health,
-    healthNote,
-    lastActivity: p.last_run ?? (fetchedAt ? new Date(fetchedAt).toISOString() : null),
-    holdings,
-    recent,
-    fallbackNote:
-      recent.length === 0
-        ? pos
-          ? "Open fade running — no closed trades in last 24h."
-          : `FLAT — waiting for a ranging-session 3σ stretch${sess ? ` · today ${sess.trades} trades` : ""}.`
-        : undefined,
-    openPositions: pos ? 1 : 0,
-  };
-}
-
-async function pdhlStatus(): Promise<BotStatus> {
-  const row = await cacheStatus("gold:pdhl:state");
-  const p = (row?.payload as PDHLPayload) ?? {};
-  const start = p.starting_balance ?? 10000;
-  const equity = p.equity ?? start;
-  const pnl = equity - start;
-  const fetchedAt = row?.fetched_at ?? null;
-  const ageMin = fetchedAt ? (Date.now() - new Date(fetchedAt).getTime()) / 60_000 : Infinity;
-
-  const _now2 = new Date();
-  const utcHour2 = _now2.getUTCHours();
-  const utcDay2  = _now2.getUTCDay();
-  const oandaOpen2 = !(utcDay2 === 6 || (utcDay2 === 0 && utcHour2 < 21) || (utcDay2 === 5 && utcHour2 >= 21));
-  const inSession = oandaOpen2 && utcHour2 >= 7 && utcHour2 < 21;
-  let health: BotHealth = "ok";
-  let healthNote: string | undefined;
-  if (!row) { health = "stale"; healthNote = "never published"; }
-  else if ((p.circuit_state ?? "NORMAL") !== "NORMAL" && p.circuit_state !== "RESUME") { health = "halt"; healthNote = `circuit ${p.circuit_state}`; }
-  else if (inSession && ageMin > 15) { health = "stale"; healthNote = `poller stale ${Math.round(ageMin)}m`; }
-
-  const pos = p.open_position;
-  const holdings: HoldingRow[] = pos
-    ? [{
-        label: pos.direction > 0 ? "LONG" : "SHORT",
-        detail: `entry $${pos.entry.toLocaleString("en-US")} · level $${pos.level.toLocaleString("en-US")} · ${pos.size.toFixed(4)} oz`,
-      }]
-    : [];
-
-  const recent: ActivityRow[] = (p.recent_trades ?? []).slice(0, 12).map((t) => ({
-    ts: t.exit,
-    label: `XAUUSD ${t.side}`,
-    detail: `${t.entry.toLocaleString("en-US")} → ${t.exit_px.toLocaleString("en-US")} · PDH/PDL $${t.level.toLocaleString("en-US")}${t.reason ? ` · ${t.reason}` : ""}`,
-    tone: t.pnl >= 0 ? "buy" : "sell",
-  }));
-
-  const sess = p.session;
-  return {
-    key: "pdhl",
-    label: "PDH/PDL DAILY",
-    href: "/ai-portfolio/pdhl-scalper",
-    mode: "PAPER",
-    asset: "XAUUSD",
-    equityOrValue: equity,
-    valueLabel: "Paper equity",
-    pnl,
-    pnlPct: start > 0 ? (pnl / start) * 100 : null,
-    health,
-    healthNote,
-    lastActivity: p.last_run ?? (fetchedAt ? new Date(fetchedAt).toISOString() : null),
-    holdings,
-    recent,
-    fallbackNote:
-      recent.length === 0
-        ? pos
-          ? "Break+retest trade open — no closed trades in last 24h."
-          : `FLAT — waiting for PDH/PDL break+retest${sess ? ` · today ${sess.trades} trades` : ""}.`
-        : undefined,
-    openPositions: pos ? 1 : 0,
-  };
-}
-
 export async function getBotOverview(userId: string): Promise<BotStatus[]> {
-  const [crypto, options, quant, gold, pdhl] = await Promise.all([
+  const [crypto, options, quant] = await Promise.all([
     cryptoStatus(userId).catch((e) => errorStatus("crypto", e)),
     optionsStatus(userId).catch((e) => errorStatus("options", e)),
     quantStatus().catch((e) => errorStatus("quant", e)),
-    goldStatus().catch((e) => errorStatus("gold", e)),
-    pdhlStatus().catch((e) => errorStatus("pdhl", e)),
   ]);
-  return [crypto, options, quant, gold, pdhl];
+  return [crypto, options, quant];
 }
 
 // ── 30-day P/L calendar ──────────────────────────────────────────────────────
@@ -492,13 +348,7 @@ export type DailyCell = {
 };
 
 // Bots shown per day, stable order.
-const CAL_BOTS: { key: BotKey; label: string }[] = [
-  { key: "gold", label: "GOLD SCALPER" },
-  { key: "pdhl", label: "PDH/PDL DAILY" },
-  { key: "quant", label: "QUANT SCALPER" },
-  { key: "options", label: "OPTIONS WHEEL" },
-  { key: "crypto", label: "CRYPTO DCA" },
-];
+const CAL_BOTS = CALENDAR_STRATEGY_KEYS.map((key) => strategyDefinition(key));
 
 export async function buildDailyCalendar(userId: string): Promise<DailyCell[]> {
   const [dbRows, todayRows] = await Promise.all([
@@ -582,16 +432,15 @@ export async function buildHomeState(userId: string): Promise<HomeState> {
     console.error("[overview] daily calendar failed:", e instanceof Error ? e.message : e);
     return [] as DailyCell[];
   });
-  const [crypto, options, quant, gold, pdhl] = await Promise.all([
+  const [crypto, options, quant] = await Promise.all([
     cryptoStatus(userId).catch((e) => errorStatus("crypto", e)),
     optionsStatus(userId).catch((e) => errorStatus("options", e)),
     quantStatus().catch((e) => errorStatus("quant", e)),
-    goldStatus().catch((e) => errorStatus("gold", e)),
-    pdhlStatus().catch((e) => errorStatus("pdhl", e)),
   ]);
 
-  const live = [crypto];
-  const paper = [gold, pdhl, quant, options];
+  const statuses: Record<BotKey, BotStatus> = { crypto, options, quant };
+  const live = LIVE_STRATEGY_KEYS.map((key) => statuses[key]);
+  const paper = PAPER_STRATEGY_KEYS.map((key) => statuses[key]);
   const visible = [...live, ...paper];
 
   const totalBook = fleetBookValue(visible);
@@ -636,17 +485,10 @@ export async function buildHomeState(userId: string): Promise<HomeState> {
 }
 
 function errorStatus(key: BotKey, err: unknown): BotStatus {
-  const meta: Record<BotKey, { label: string; href: string; mode: "LIVE" | "PAPER"; asset: string }> = {
-    crypto: { label: "CRYPTO DCA", href: "/ai-portfolio/crypto", mode: "LIVE", asset: "BTC·ETH·SOL·HYPE" },
-    options: { label: "OPTIONS WHEEL", href: "/ai-portfolio/options", mode: "PAPER", asset: "—" },
-    quant: { label: "QUANT SCALPER", href: "/ai-portfolio/quant-scalper", mode: "PAPER", asset: "BTC·ETH·BNB +" },
-    gold: { label: "GOLD SCALPER", href: "/ai-portfolio/gold-scalper", mode: "PAPER", asset: "XAUUSD" },
-    pdhl: { label: "PDH/PDL DAILY", href: "/ai-portfolio/pdhl-scalper", mode: "PAPER", asset: "XAUUSD" },
-  };
-  const m = meta[key];
+  const m = strategyDefinition(key);
   console.error(`[overview] ${key} failed:`, err instanceof Error ? err.message : err);
   return {
-    key, ...m,
+    ...m,
     equityOrValue: 0, valueLabel: "—", pnl: null, pnlPct: null,
     health: "stale", healthNote: "data read failed",
     lastActivity: null, holdings: [], recent: [],

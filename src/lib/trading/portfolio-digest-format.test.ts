@@ -24,25 +24,19 @@ describe("portfolio Telegram digest", () => {
   it("includes every active trading bot with honest execution modes", () => {
     const text = formatPortfolioDigest([
       bot({ key: "crypto", label: "CRYPTO DCA", mode: "LIVE", valueLabel: "Holdings" }),
-      bot({ key: "gold", label: "GOLD SCALPER" }),
-      bot({ key: "pdhl", label: "PDH/PDL DAILY" }),
       bot({ key: "quant", label: "QUANT SCALPER" }),
       bot({ key: "options", label: "OPTIONS WHEEL" }),
     ], "Tue, Aug 25, 2026");
 
     expect(text).toContain("🟢 LIVE: CRYPTO DCA");
-    expect(text).toContain("📝 PAPER: GOLD SCALPER");
-    expect(text).toContain("📝 PAPER: PDH/PDL DAILY");
     expect(text).toContain("📝 PAPER: QUANT SCALPER");
     expect(text).toContain("📝 PAPER: OPTIONS WHEEL");
-    expect(text).not.toContain("LIVE: GOLD SCALPER");
+    expect(text).not.toContain("LIVE: QUANT SCALPER");
   });
 
   it("does not append a benched-bot section", () => {
     const text = formatPortfolioDigest([
       bot({ key: "crypto", label: "CRYPTO DCA", mode: "LIVE", valueLabel: "Holdings" }),
-      bot({ key: "gold", label: "GOLD SCALPER" }),
-      bot({ key: "pdhl", label: "PDH/PDL DAILY" }),
       bot({ key: "quant", label: "QUANT SCALPER" }),
       bot({ key: "options", label: "OPTIONS WHEEL" }),
     ], "Tue, Aug 25, 2026");

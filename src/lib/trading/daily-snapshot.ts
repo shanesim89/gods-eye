@@ -29,10 +29,7 @@ type Row = {
   equity: number | null;
 };
 
-const SCALPERS: { bot: string; key: string }[] = [
-  { bot: "gold", key: "gold:scalper:state" },
-  { bot: "pdhl", key: "gold:pdhl:state" },
-];
+const SCALPERS: { bot: string; key: string }[] = [];
 
 async function cachePayload<T>(key: string): Promise<T | null> {
   const rows = await db
