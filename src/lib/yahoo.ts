@@ -274,6 +274,8 @@ export type YahooSummary = {
   nextEarningsDate: string | null; // ISO date, e.g. "2025-07-30"
   nextEarningsDateIsEstimate: boolean;
   epsHistory: EpsQuarter[] | null; // last 4 quarters
+  // Next ex-dividend date (new) — null when unset or already in the past.
+  exDividendDate: string | null; // ISO date, e.g. "2025-08-08"
 };
 
 type RawValue =
@@ -297,6 +299,12 @@ function rawStr(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
 
+// RawValue can be the {raw,fmt} date-shaped object (exDividendDate) — rawStr()
+// only handles bare strings, so pull .fmt out separately.
+function rawFmt(v: RawValue): string | null {
+  return typeof v === "object" && v && typeof v.fmt === "string" ? v.fmt : null;
+}
+
 type QuoteSummaryResponse = {
   quoteSummary?: {
     result?: Array<{
@@ -310,6 +318,7 @@ type QuoteSummaryResponse = {
           earningsDate?: Array<{ raw?: number; fmt?: string }>;
           isEarningsDateEstimate?: boolean;
         };
+        exDividendDate?: { raw?: number; fmt?: string };
       };
       earnings?: {
         earningsChart?: {
@@ -449,6 +458,13 @@ async function fetchYahooSummary(symbol: string): Promise<YahooSummary | null> {
     const nextEarningsDateIsEstimate =
       ce?.earnings?.isEarningsDateEstimate ?? true;
 
+    // Ex-dividend date from calendarEvents, falling back to summaryDetail —
+    // Yahoo has listed it in either module depending on the endpoint version.
+    // Yahoo returns the MOST RECENT ex-div date even after it's passed (it
+    // doesn't project the next one), so a stale/past value is filtered out
+    // by the caller rather than here — this just surfaces whatever Yahoo has.
+    const exDividendDate = rawFmt(ce?.exDividendDate) ?? rawFmt(sd.exDividendDate);
+
     // EPS history from earnings chart (last 4 quarters)
     const epsQuarterly = er?.earningsChart?.quarterly ?? [];
     const epsHistory: EpsQuarter[] = epsQuarterly
@@ -524,6 +540,7 @@ async function fetchYahooSummary(symbol: string): Promise<YahooSummary | null> {
       nextEarningsDate,
       nextEarningsDateIsEstimate,
       epsHistory: epsHistory.length ? epsHistory : null,
+      exDividendDate,
     };
   } catch {
     return null;

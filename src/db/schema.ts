@@ -467,6 +467,8 @@ export const ai_options_settings = pgTable("ai_options_settings", {
   profit_take_pct: integer("profit_take_pct").default(60).notNull(), // close short at % of max profit
   roll_dte: integer("roll_dte").default(21).notNull(), // roll/close short at this DTE
   defensive_roll_delta: integer("defensive_roll_delta").default(40).notNull(), // 0.40 — roll short leg early once delta climbs this high, before spot fully crosses the strike (caps single-day realized-loss size on fast rallies)
+  earnings_blackout_days: integer("earnings_blackout_days").default(3).notNull(), // force-roll a short leg (and skip new PMCC diagonals) once the underlying's next earnings print is this many days out
+  max_positions_per_sector: integer("max_positions_per_sector").default(2).notNull(), // cap on concurrently-open PMCC diagonals sharing a GICS sector, enforced when picking new screener buys
   short_dte_min: integer("short_dte_min").default(30).notNull(), // PMCC short-leg window (separate from CSP dte)
   short_dte_max: integer("short_dte_max").default(45).notNull(),
   pmcc_budget_pct: integer("pmcc_budget_pct").default(60).notNull(), // LEAPS debit ≤ % of account

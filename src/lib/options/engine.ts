@@ -17,6 +17,7 @@ import type { OptionsStrategyConfig, LegSelection } from "./strategy";
 import { screenPmccCandidates, isTransientScreenerResult, type ScreenerResult } from "./screener";
 import { SCREENER_TUNING, MAX_NEW_DIAGONALS_PER_RUN } from "./screener-util";
 import { fetchRealCSPQuote, fetchRealCCQuote, toLegSelection } from "./wheel-chain";
+import { getYahooOptions, getYahooSummary } from "@/lib/yahoo";
 // fetchDeribitCCQuote is deliberately NOT imported: crypto is short-put-only
 // (Deribit options are cash-settled, so there are never coins to cover a call).
 // The function stays in deribit-chain.ts for the fractional-mode/covered path
@@ -64,6 +65,28 @@ function weekKey(d: Date): string {
   const day = d.getUTCDay() || 7;
   const monday = new Date(ms - (day - 1) * 86_400_000);
   return monday.toISOString().slice(0, 10);
+}
+
+function daysUntil(iso: string | null | undefined, now: Date): number | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return Math.round((d.getTime() - now.getTime()) / 86_400_000);
+}
+
+// Real per-contract IV for an already-open short leg, snapped to the nearest
+// listed strike at its (fixed) expiry — same "prefer real chain, fall back to
+// histVol" pattern as wheel-chain.ts's fetchRealLeg, but pricing rather than
+// selecting a strike. Returns null on any chain miss so callers keep using
+// the histVol sigma from market() unchanged.
+async function realSigma(underlying: string, optType: OptType, strike: number, expiry: Date): Promise<number | null> {
+  const expirySec = Math.round(expiry.getTime() / 1000);
+  const chain = await getYahooOptions(underlying, expirySec).catch(() => null);
+  if (!chain) return null;
+  const rows = optType === "P" ? chain.puts : chain.calls;
+  if (rows.length === 0) return null;
+  const row = rows.reduce((best, r) => (Math.abs(r.strike - strike) < Math.abs(best.strike - strike) ? r : best));
+  return row.impliedVolatility > 0 ? row.impliedVolatility : null;
 }
 
 function cfgFromSettings(settings: typeof ai_options_settings.$inferSelect): OptionsStrategyConfig {
@@ -775,6 +798,20 @@ export async function runOptionsForUser(
               // update below (the DB write alone wouldn't be visible to this map).
               const bought: { symbol: string; debit: number; yieldPct: number }[] = [];
               const considered = new Set<string>();
+
+              // Sector-concentration cap: tally currently-open diagonals by GICS
+              // sector so one hot sector can't eat the whole account.
+              const sectorCap = settings.max_positions_per_sector;
+              const sectorCounts = new Map<string, number>();
+              if (sectorCap > 0) {
+                for (const [sym, w] of wheelByUnderlying) {
+                  if (w.state !== "pmcc_holding_leaps") continue;
+                  const heldFx = await getYahooSummary(sym).catch(() => null);
+                  if (!heldFx?.sector) continue; // no data — don't count against the cap
+                  sectorCounts.set(heldFx.sector, (sectorCounts.get(heldFx.sector) ?? 0) + 1);
+                }
+              }
+
               while (bought.length < MAX_NEW_DIAGONALS_PER_RUN) {
                 const top = screenerResult.ranked.find(
                   (c) =>
@@ -784,6 +821,18 @@ export async function runOptionsForUser(
                 );
                 if (!top) break;
                 considered.add(top.symbol);
+
+                const topFx = await getYahooSummary(top.symbol).catch(() => null);
+                const topSector = topFx?.sector ?? null;
+                if (sectorCap > 0 && topSector && (sectorCounts.get(topSector) ?? 0) >= sectorCap) {
+                  outcomes.push({ underlying: top.symbol, status: "skipped", reason: `sector cap reached (${topSector})` });
+                  continue;
+                }
+                const topEarningsDays = daysUntil(topFx?.nextEarningsDate, now);
+                if (topEarningsDays !== null && topEarningsDays >= 0 && topEarningsDays <= settings.earnings_blackout_days) {
+                  outcomes.push({ underlying: top.symbol, status: "skipped", reason: `earnings in ${topEarningsDays}d — skip new diagonal` });
+                  continue;
+                }
 
                 // The configured PMCC slot only triggers the screener. Each ranked
                 // company must receive its own council evaluation; attributing SPY's
@@ -876,6 +925,7 @@ export async function runOptionsForUser(
                   underlying: top.symbol,
                   state: "pmcc_holding_leaps",
                 } as NonNullable<ReturnType<typeof wheelByUnderlying.get>>);
+                if (topSector) sectorCounts.set(topSector, (sectorCounts.get(topSector) ?? 0) + 1);
                 bought.push({ symbol: top.symbol, debit, yieldPct: top.annualizedYieldPct });
                 outcomes.push({ underlying: top.symbol, status: "opened_long", detail: { via: "screener", forSlot: symbol, debit } });
               }
@@ -1629,6 +1679,15 @@ export async function manageOptionsPositionsForUser(userId: string): Promise<Man
     return entry;
   }
 
+  // One earnings/ex-div fetch per underlying — getYahooSummary caches 6h internally.
+  const fundamentalsCache = new Map<string, Awaited<ReturnType<typeof getYahooSummary>>>();
+  async function fundamentals(symbol: string) {
+    if (fundamentalsCache.has(symbol)) return fundamentalsCache.get(symbol)!;
+    const summary = await getYahooSummary(symbol).catch(() => null);
+    fundamentalsCache.set(symbol, summary);
+    return summary;
+  }
+
   // Idempotency: one order row per (position, action, day). False → already done today.
   async function claim(pos: OpenPosition, action: string, detail: Record<string, unknown>): Promise<boolean> {
     const rows = await db
@@ -1787,10 +1846,14 @@ export async function manageOptionsPositionsForUser(userId: string): Promise<Man
       const strike = parseFloat(pos.strike);
       const entry = parseFloat(pos.entry_premium);
       const optType = pos.opt_type as OptType;
-      const current = bsPrice({ type: optType, S: mkt.spot, K: strike, t, r: cfg.riskFreeRate, sigma: mkt.sigma });
+      // Real chain IV when listed, else the histVol sigma from market().
+      const liveSigma = (await realSigma(pos.underlying, optType, strike, pos.expiry).catch(() => null)) ?? mkt.sigma;
+      const current = bsPrice({ type: optType, S: mkt.spot, K: strike, t, r: cfg.riskFreeRate, sigma: liveSigma });
+      const fx = pos.asset_class === "crypto" ? null : await fundamentals(pos.underlying);
 
       // 1. Early assignment: deep-ITM short call with no extrinsic left, near a
-      //    quarterly dividend month. Forced, not chosen — check first.
+      //    real ex-dividend date (falls back to a quarterly-month heuristic
+      //    when Yahoo has no ex-div date). Forced, not chosen — check first.
       //
       // Threshold scales with spot (0.1% of spot), not a flat $0.05 — under
       // Black-Scholes, an ITM call's extrinsic value has a hard floor of
@@ -1799,14 +1862,17 @@ export async function manageOptionsPositionsForUser(userId: string): Promise<Man
       // floor is already ≈$0.55 — a flat $0.05 threshold made this branch
       // essentially unreachable for any strike above ~$50 at any DTE beyond
       // ~1 day (found via engine.test.ts trying to exercise it, 2026-07-15).
-      const isDivMonth = [3, 6, 9, 12].includes(now.getUTCMonth() + 1);
+      const exDivDays = daysUntil(fx?.exDividendDate, now);
+      const nearExDiv = exDivDays !== null
+        ? exDivDays >= 0 && exDivDays <= 5
+        : [3, 6, 9, 12].includes(now.getUTCMonth() + 1);
       const intrinsic = optType === "C" ? Math.max(0, mkt.spot - strike) : Math.max(0, strike - mkt.spot);
       const extrinsic = Math.max(0, current - intrinsic);
       const extrinsicFloor = mkt.spot * 0.001;
       if (
         optType === "C" &&
         pos.asset_class !== "crypto" &&
-        isDivMonth &&
+        nearExDiv &&
         intrinsic > 0 &&
         extrinsic < extrinsicFloor
       ) {
@@ -1854,17 +1920,20 @@ export async function manageOptionsPositionsForUser(userId: string): Promise<Man
         continue;
       }
 
-      // 3. Roll: tested (spot through the strike), inside the gamma window, or
-      //    delta has climbed past the defensive threshold — catches a fast
-      //    rally BEFORE it fully crosses the strike, so a single roll doesn't
-      //    eat one huge realized loss on a gap day.
+      // 3. Roll: tested (spot through the strike), inside the gamma window,
+      //    delta has climbed past the defensive threshold, or earnings are
+      //    close enough to blow through both — catches a fast rally or an
+      //    earnings gap BEFORE it fully crosses the strike, so a single roll
+      //    doesn't eat one huge realized loss on a gap day.
       const tested = optType === "C" ? mkt.spot > strike : mkt.spot < strike;
-      const deltaBreach = Math.abs(bsGreeks({ type: optType, S: mkt.spot, K: strike, t, r: cfg.riskFreeRate, sigma: mkt.sigma }).delta)
+      const deltaBreach = Math.abs(bsGreeks({ type: optType, S: mkt.spot, K: strike, t, r: cfg.riskFreeRate, sigma: liveSigma }).delta)
         >= settings.defensive_roll_delta / 100;
-      if (tested || dte <= cfg.rollDte || deltaBreach) {
-        if (!(await claim(pos, "roll", { tested, dte, deltaBreach, spot: mkt.spot, strike }))) continue;
+      const earningsDays = daysUntil(fx?.nextEarningsDate, now);
+      const earningsBlackout = earningsDays !== null && earningsDays >= 0 && earningsDays <= settings.earnings_blackout_days;
+      if (tested || dte <= cfg.rollDte || deltaBreach || earningsBlackout) {
+        if (!(await claim(pos, "roll", { tested, dte, deltaBreach, earningsBlackout, spot: mkt.spot, strike }))) continue;
         const realized = await closeShort(pos, current, "roll");
-        outcomes.push({ underlying: pos.underlying, action: "roll", detail: { realized, tested, dte, deltaBreach } });
+        outcomes.push({ underlying: pos.underlying, action: "roll", detail: { realized, tested, dte, deltaBreach, earningsBlackout } });
         if (pos.strategy === "pmcc_short") {
           const sym = await reshort(pos, mkt.spot, mkt.sigma);
           if (sym) outcomes.push({ underlying: pos.underlying, action: "reshort", detail: { contractSymbol: sym } });

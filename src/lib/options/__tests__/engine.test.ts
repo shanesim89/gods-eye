@@ -109,7 +109,11 @@ vi.mock("@/lib/options/screener", () => ({
 }));
 
 const getYahooOptions = vi.fn();
-vi.mock("@/lib/yahoo", () => ({ getYahooOptions: (...a: unknown[]) => getYahooOptions(...a) }));
+const getYahooSummary = vi.fn();
+vi.mock("@/lib/yahoo", () => ({
+  getYahooOptions: (...a: unknown[]) => getYahooOptions(...a),
+  getYahooSummary: (...a: unknown[]) => getYahooSummary(...a),
+}));
 
 // Deribit is a live public HTTP endpoint — mocked so crypto tests never hit it.
 const fetchDeribitCSPQuote = vi.fn();
@@ -213,6 +217,8 @@ function baseSettings(overrides: Partial<Row> = {}): Row {
     profit_take_pct: 60,
     roll_dte: 21,
     defensive_roll_delta: 40,
+    earnings_blackout_days: 3,
+    max_positions_per_sector: 2,
     short_dte_min: 30,
     short_dte_max: 45,
     pmcc_budget_pct: 60,
@@ -329,11 +335,15 @@ beforeEach(() => {
   getPriceHistory.mockReset();
   runCouncil.mockReset();
   getYahooOptions.mockReset();
+  getYahooSummary.mockReset();
   fetchDeribitCSPQuote.mockReset();
   fetchDeribitCSPQuote.mockResolvedValue(null);
   // Default: no real chain available — every CSP/CC test falls back to the
   // pre-existing BS-off-HV path unless it explicitly opts into a real quote.
   getYahooOptions.mockResolvedValue(null);
+  // Default: no fundamentals — earnings-blackout/ex-div/sector gates stay
+  // inert (heuristic fallback) unless a test explicitly opts in.
+  getYahooSummary.mockResolvedValue(null);
   // Default: 30d history implies noticeably higher vol than the 252d fallback,
   // so ivVsHv's proxy percentile clears the 40% IVR gate by default — tests
   // not specifically exercising that gate shouldn't incidentally trip it.
