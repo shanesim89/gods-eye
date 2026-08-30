@@ -7,6 +7,7 @@ import {
   ai_trade_orders,
   market_data_cache,
   daily_pnl,
+  vulcan_positions,
 } from "@/db/schema";
 
 // Writes durable per-bot rows into daily_pnl for ONE completed UTC day. Run by
@@ -170,6 +171,50 @@ export async function computeDailyRows(userId: string, day: Date): Promise<Row[]
     }
   } catch (e) {
     console.error("[daily-snapshot] crypto failed:", e instanceof Error ? e.message : e);
+  }
+
+  // ── vulcan — realized P/L from exits that day + entry/exit activity count ──
+  try {
+    const [entries, exits] = await Promise.all([
+      db
+        .select({ n: sql<number>`count(*)` })
+        .from(vulcan_positions)
+        .where(
+          and(
+            eq(vulcan_positions.user_id, userId),
+            gte(vulcan_positions.entry_date, start),
+            lt(vulcan_positions.entry_date, end),
+          ),
+        ),
+      db
+        .select({
+          n: sql<number>`count(*)`,
+          pnl: sql<string>`coalesce(sum((${vulcan_positions.exit_price} - ${vulcan_positions.entry_price}) * ${vulcan_positions.qty}), 0)`,
+        })
+        .from(vulcan_positions)
+        .where(
+          and(
+            eq(vulcan_positions.user_id, userId),
+            eq(vulcan_positions.still_open, false),
+            gte(vulcan_positions.exit_date, start),
+            lt(vulcan_positions.exit_date, end),
+          ),
+        ),
+    ]);
+    const entryN = Number(entries[0]?.n ?? 0);
+    const exitN = Number(exits[0]?.n ?? 0);
+    const activity = entryN + exitN;
+    if (activity > 0) {
+      rows.push({
+        bot: "vulcan",
+        realized_pnl: parseFloat(exits[0]?.pnl ?? "0"),
+        return_pct: null,
+        activity_count: activity,
+        equity: null,
+      });
+    }
+  } catch (e) {
+    console.error("[daily-snapshot] vulcan failed:", e instanceof Error ? e.message : e);
   }
 
   return rows;
