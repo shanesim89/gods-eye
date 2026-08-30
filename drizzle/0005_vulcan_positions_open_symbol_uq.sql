@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "vulcan_positions_open_symbol_uq" ON "vulcan_positions" USING btree ("user_id","symbol") WHERE "vulcan_positions"."still_open" = true;

@@ -11,8 +11,10 @@ import {
   date,
   index,
   unique,
+  uniqueIndex,
   foreignKey,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -553,3 +555,50 @@ export const ai_options_orders = pgTable("ai_options_orders", {
   detail: jsonb("detail"),
   created_at: timestamp("created_at").defaultNow().notNull(),
 });
+
+// Vulcan equity screener — weekly sector-momentum + RS/volume/stage rotation.
+// Written by quant-scrap/vulcan/run.py (VPS cron), read-only from Next.js.
+export const vulcan_positions = pgTable(
+  "vulcan_positions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    user_id: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+    symbol: text("symbol").notNull(),
+    qty: numeric("qty", { precision: 20, scale: 8 }).notNull(),
+    entry_price: numeric("entry_price", { precision: 18, scale: 4 }).notNull(),
+    entry_date: timestamp("entry_date").notNull(),
+    still_open: boolean("still_open").default(true).notNull(),
+    exit_price: numeric("exit_price", { precision: 18, scale: 4 }),
+    exit_date: timestamp("exit_date"),
+    created_at: timestamp("created_at").defaultNow().notNull(),
+    updated_at: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    // Partial unique index: at most one OPEN row per (user_id, symbol). Closed
+    // (still_open=false) history rows are unaffected — a symbol can be
+    // re-entered/re-exited many times over its history.
+    one_open_per_symbol: uniqueIndex("vulcan_positions_open_symbol_uq")
+      .on(t.user_id, t.symbol)
+      .where(sql`${t.still_open} = true`),
+  }),
+);
+
+export const vulcan_scores = pgTable(
+  "vulcan_scores",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    run_date: date("run_date").notNull(),
+    symbol: text("symbol").notNull(),
+    sector: text("sector").notNull(),
+    rs_percentile: numeric("rs_percentile", { precision: 6, scale: 3 }).notNull(),
+    ud_ratio: numeric("ud_ratio", { precision: 12, scale: 4 }).notNull(),
+    ud_percentile: numeric("ud_percentile", { precision: 6, scale: 3 }).notNull(),
+    stage2_eligible: boolean("stage2_eligible").notNull(),
+    composite_score: numeric("composite_score", { precision: 6, scale: 3 }).notNull(),
+    composite_rank: integer("composite_rank"), // null if not in that week's top 20
+    created_at: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    run_date_idx: index("vulcan_scores_run_date_idx").on(t.run_date),
+  }),
+);

@@ -14,6 +14,7 @@ import { computeDailyRows } from "@/lib/trading/daily-snapshot";
 import { getPrice } from "@/lib/market";
 import { getOrCreateSettings } from "@/lib/trading/settings";
 import { getOrCreateOptionsSettings, type Underlying } from "@/lib/options/settings";
+import { getVulcanDashboardData } from "@/lib/trading/vulcan-dashboard";
 import { fleetBookValue, fleetPnl } from "@/lib/ai-portfolio/fleet";
 import {
   CALENDAR_STRATEGY_KEYS,
@@ -323,13 +324,50 @@ async function quantStatus(): Promise<BotStatus> {
   };
 }
 
+async function vulcanStatus(userId: string): Promise<BotStatus> {
+  const data = await getVulcanDashboardData(userId);
+  const ageD = data.latestRunDate
+    ? (Date.now() - new Date(data.latestRunDate).getTime()) / DAY_MS
+    : Infinity;
+  const health: BotHealth = data.latestRunDate == null ? "stale" : ageD > 9 ? "stale" : "ok";
+  const healthNote =
+    data.latestRunDate == null ? "never run" : ageD > 9 ? `no run in ${Math.round(ageD)}d` : undefined;
+
+  const holdings: HoldingRow[] = data.holdings.map((h) => ({
+    label: h.symbol,
+    detail: `${h.qty.toFixed(2)} sh @ ${h.currentPrice ? `$${h.currentPrice.toFixed(2)}` : "—"}`,
+    value: h.value ?? undefined,
+    pnl: h.pnl,
+  }));
+
+  return {
+    key: "vulcan",
+    label: "VULCAN EQUITY",
+    href: "/ai-portfolio/vulcan",
+    mode: "PAPER",
+    asset: "EQUITY TOP 20",
+    equityOrValue: data.totalValue,
+    valueLabel: "Paper equity",
+    pnl: data.totalPnl,
+    pnlPct: null,
+    health,
+    healthNote,
+    lastActivity: data.latestRunDate,
+    holdings,
+    recent: [],
+    fallbackNote: data.holdings.length === 0 ? "No open positions — runs weekly (Mondays UTC)." : undefined,
+    openPositions: data.holdings.length,
+  };
+}
+
 export async function getBotOverview(userId: string): Promise<BotStatus[]> {
-  const [crypto, options, quant] = await Promise.all([
+  const [crypto, options, quant, vulcan] = await Promise.all([
     cryptoStatus(userId).catch((e) => errorStatus("crypto", e)),
     optionsStatus(userId).catch((e) => errorStatus("options", e)),
     quantStatus().catch((e) => errorStatus("quant", e)),
+    vulcanStatus(userId).catch((e) => errorStatus("vulcan", e)),
   ]);
-  return [crypto, options, quant];
+  return [crypto, options, quant, vulcan];
 }
 
 // ── 30-day P/L calendar ──────────────────────────────────────────────────────
@@ -432,13 +470,14 @@ export async function buildHomeState(userId: string): Promise<HomeState> {
     console.error("[overview] daily calendar failed:", e instanceof Error ? e.message : e);
     return [] as DailyCell[];
   });
-  const [crypto, options, quant] = await Promise.all([
+  const [crypto, options, quant, vulcan] = await Promise.all([
     cryptoStatus(userId).catch((e) => errorStatus("crypto", e)),
     optionsStatus(userId).catch((e) => errorStatus("options", e)),
     quantStatus().catch((e) => errorStatus("quant", e)),
+    vulcanStatus(userId).catch((e) => errorStatus("vulcan", e)),
   ]);
 
-  const statuses: Record<BotKey, BotStatus> = { crypto, options, quant };
+  const statuses: Record<BotKey, BotStatus> = { crypto, options, quant, vulcan };
   const live = LIVE_STRATEGY_KEYS.map((key) => statuses[key]);
   const paper = PAPER_STRATEGY_KEYS.map((key) => statuses[key]);
   const visible = [...live, ...paper];
