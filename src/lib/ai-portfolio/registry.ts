@@ -1,7 +1,7 @@
 export type StrategyMode = "LIVE" | "PAPER";
 
 type ActiveStrategy = {
-  key: "crypto" | "options" | "quant" | "vulcan";
+  key: "crypto" | "options" | "quant" | "vulcan" | "universe";
   label: string;
   dashboardLabel: string;
   href: string;
@@ -47,13 +47,22 @@ export const ACTIVE_STRATEGIES = [
     asset: "EQUITY TOP 20",
     description: "Weekly sector-momentum + RS/volume/stage equity rotation — paper trading.",
   },
+  {
+    key: "universe",
+    label: "UNIVERSE BOT",
+    dashboardLabel: "UNIVERSE",
+    href: "/ai-portfolio/universe",
+    mode: "PAPER",
+    asset: "30 TECH MEGA-CAPS",
+    description: "Kronos-gated intraday pullback bot — 30 tech mega-caps, paper trading.",
+  },
 ] as const satisfies readonly ActiveStrategy[];
 
 export type BotKey = (typeof ACTIVE_STRATEGIES)[number]["key"];
 
 export const LIVE_STRATEGY_KEYS = ["crypto"] as const satisfies readonly BotKey[];
-export const PAPER_STRATEGY_KEYS = ["quant", "options", "vulcan"] as const satisfies readonly BotKey[];
-export const CALENDAR_STRATEGY_KEYS = ["quant", "options", "crypto", "vulcan"] as const satisfies readonly BotKey[];
+export const PAPER_STRATEGY_KEYS = ["quant", "options", "vulcan", "universe"] as const satisfies readonly BotKey[];
+export const CALENDAR_STRATEGY_KEYS = ["quant", "options", "crypto", "vulcan", "universe"] as const satisfies readonly BotKey[];
 
 export const ACTIVE_STATE_CACHE_KEYS = [
   "quant:scrap:state",

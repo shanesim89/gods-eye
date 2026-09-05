@@ -13,6 +13,7 @@ import {
   unique,
   uniqueIndex,
   foreignKey,
+  bigserial,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -600,5 +601,38 @@ export const vulcan_scores = pgTable(
   },
   (t) => ({
     run_date_idx: index("vulcan_scores_run_date_idx").on(t.run_date),
+  }),
+);
+
+// ─── Universe bot: intraday Kronos-gated pullback bot on 30 tech mega-caps ───
+// Owned by quant-scrap/universe/universe_db.py — the bot is the only writer,
+// this dashboard is read-only. Mirrors that module's raw-SQL table shape.
+export const universe_positions = pgTable(
+  "universe_positions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    user_id: uuid("user_id").notNull(),
+    symbol: text("symbol").notNull(),
+    qty: numeric("qty", { precision: 24, scale: 8 }).notNull(),
+    entry_price: numeric("entry_price", { precision: 18, scale: 4 }).notNull(),
+    entry_at: timestamp("entry_at", { withTimezone: true }).defaultNow().notNull(),
+    oco_order_id: text("oco_order_id"),
+    still_open: boolean("still_open").default(true).notNull(),
+    exit_price: numeric("exit_price", { precision: 18, scale: 4 }),
+    exit_at: timestamp("exit_at", { withTimezone: true }),
+    exit_reason: text("exit_reason"), // target | stop | time_stop | broker_closed
+    updated_at: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+);
+
+export const universe_cooldowns = pgTable(
+  "universe_cooldowns",
+  {
+    user_id: uuid("user_id").notNull(),
+    symbol: text("symbol").notNull(),
+    until_at: timestamp("until_at", { withTimezone: true }).notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.user_id, t.symbol] }),
   }),
 );
