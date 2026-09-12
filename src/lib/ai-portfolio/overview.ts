@@ -325,6 +325,83 @@ async function quantStatus(): Promise<BotStatus> {
   };
 }
 
+type LeveragedPayload = {
+  equity?: number;
+  market_open?: boolean;
+  validated?: boolean;
+  active_params?: Record<string, unknown>;
+  backtest_stats?: {
+    trades?: number; win_rate?: number; profit_factor?: number;
+    expectancy_r?: number; sharpe_ann?: number; max_dd_pct?: number;
+  };
+  session?: {
+    trades?: number; win_rate?: number; profit_factor?: number;
+    expectancy_r?: number; total_return_pct?: number;
+  };
+  open_position?: Record<string, Record<string, string>>;
+  actions?: string[];
+  last_run?: string | null;
+};
+
+async function leveragedStatus(): Promise<BotStatus> {
+  const row = await cacheStatus("leveraged-nasdaq");
+  const p = (row?.payload as LeveragedPayload) ?? {};
+  const fetchedAt = row?.fetched_at ?? null;
+  const ageMin = fetchedAt ? (Date.now() - new Date(fetchedAt).getTime()) / 60_000 : Infinity;
+
+  let health: BotHealth = "ok";
+  let healthNote: string | undefined;
+  if (!row) { health = "stale"; healthNote = "never published"; }
+  else if (p.market_open && ageMin > 15) { health = "stale"; healthNote = `no run in ${Math.round(ageMin)}m`; }
+  else if (p.validated === false) { healthNote = "unvalidated — best in-sample candidate, failed OOS every window"; }
+
+  const sess = p.session ?? {};
+  const openSymbols = Object.keys(p.open_position ?? {});
+
+  // Trades on the shared paper account (see UNIVERSE BOT) — its equity isn't
+  // this bot's own book, so it's shown as context, not summed into the fleet total.
+  const holdings: HoldingRow[] = [
+    ...openSymbols.map((symbol) => ({
+      label: symbol,
+      detail: Object.entries(p.open_position?.[symbol] ?? {})
+        .filter(([k]) => k === "qty" || k === "entry")
+        .map(([k, v]) => `${k} ${v}`)
+        .join(" · "),
+    })),
+    {
+      label: "TODAY",
+      detail: `${sess.trades ?? 0} trades · PF ${(sess.profit_factor ?? 0).toFixed(2)} · expR ${(sess.expectancy_r ?? 0).toFixed(3)}`,
+    },
+  ];
+
+  const recent: ActivityRow[] = (p.actions ?? []).slice(0, 12).map((a) => ({
+    ts: p.last_run ?? new Date().toISOString(),
+    label: a.split(" ")[0] ?? a,
+    detail: a,
+    tone: a.startsWith("BUY") ? "buy" : a.startsWith("CLOSE") ? "sell" : a.startsWith("SKIP") ? "skip" : "info",
+  }));
+
+  return {
+    key: "leveraged",
+    label: "LEVERAGED TQQQ/SQQQ",
+    href: "/ai-portfolio/leveraged",
+    mode: "PAPER",
+    asset: "TQQQ·SQQQ",
+    equityOrValue: 0,
+    valueLabel: "Shared acct (see Universe)",
+    pnl: null,
+    pnlPct: null,
+    health,
+    healthNote,
+    lastActivity: p.last_run ?? (fetchedAt ? new Date(fetchedAt).toISOString() : null),
+    holdings,
+    recent,
+    fallbackNote: recent.length === 0 ? "No orders today — flat, awaiting a breakout signal." : undefined,
+    openPositions: openSymbols.length,
+    alert: null,
+  };
+}
+
 async function vulcanStatus(userId: string): Promise<BotStatus> {
   const data = await getVulcanDashboardData(userId);
   const ageD = data.latestRunDate
@@ -399,14 +476,15 @@ async function universeStatus(): Promise<BotStatus> {
 }
 
 export async function getBotOverview(userId: string): Promise<BotStatus[]> {
-  const [crypto, options, quant, vulcan, universe] = await Promise.all([
+  const [crypto, options, quant, vulcan, universe, leveraged] = await Promise.all([
     cryptoStatus(userId).catch((e) => errorStatus("crypto", e)),
     optionsStatus(userId).catch((e) => errorStatus("options", e)),
     quantStatus().catch((e) => errorStatus("quant", e)),
     vulcanStatus(userId).catch((e) => errorStatus("vulcan", e)),
     universeStatus().catch((e) => errorStatus("universe", e)),
+    leveragedStatus().catch((e) => errorStatus("leveraged", e)),
   ]);
-  return [crypto, options, quant, vulcan, universe];
+  return [crypto, options, quant, vulcan, universe, leveraged];
 }
 
 // ── 30-day P/L calendar ──────────────────────────────────────────────────────
@@ -509,15 +587,16 @@ export async function buildHomeState(userId: string): Promise<HomeState> {
     console.error("[overview] daily calendar failed:", e instanceof Error ? e.message : e);
     return [] as DailyCell[];
   });
-  const [crypto, options, quant, vulcan, universe] = await Promise.all([
+  const [crypto, options, quant, vulcan, universe, leveraged] = await Promise.all([
     cryptoStatus(userId).catch((e) => errorStatus("crypto", e)),
     optionsStatus(userId).catch((e) => errorStatus("options", e)),
     quantStatus().catch((e) => errorStatus("quant", e)),
     vulcanStatus(userId).catch((e) => errorStatus("vulcan", e)),
     universeStatus().catch((e) => errorStatus("universe", e)),
+    leveragedStatus().catch((e) => errorStatus("leveraged", e)),
   ]);
 
-  const statuses: Record<BotKey, BotStatus> = { crypto, options, quant, vulcan, universe };
+  const statuses: Record<BotKey, BotStatus> = { crypto, options, quant, vulcan, universe, leveraged };
   const live = LIVE_STRATEGY_KEYS.map((key) => statuses[key]);
   const paper = PAPER_STRATEGY_KEYS.map((key) => statuses[key]);
   const visible = [...live, ...paper];

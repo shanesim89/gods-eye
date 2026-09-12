@@ -1,7 +1,7 @@
 export type StrategyMode = "LIVE" | "PAPER";
 
 type ActiveStrategy = {
-  key: "crypto" | "options" | "quant" | "vulcan" | "universe";
+  key: "crypto" | "options" | "quant" | "vulcan" | "universe" | "leveraged";
   label: string;
   dashboardLabel: string;
   href: string;
@@ -56,16 +56,26 @@ export const ACTIVE_STRATEGIES = [
     asset: "30 TECH MEGA-CAPS",
     description: "Kronos-gated intraday pullback bot — 30 tech mega-caps, paper trading.",
   },
+  {
+    key: "leveraged",
+    label: "LEVERAGED TQQQ/SQQQ",
+    dashboardLabel: "LEVERAGED",
+    href: "/ai-portfolio/leveraged",
+    mode: "PAPER",
+    asset: "TQQQ·SQQQ",
+    description: "Nasdaq 3x intraday momentum, EOD flatten — unvalidated (failed OOS), paper trading.",
+  },
 ] as const satisfies readonly ActiveStrategy[];
 
 export type BotKey = (typeof ACTIVE_STRATEGIES)[number]["key"];
 
 export const LIVE_STRATEGY_KEYS = ["crypto"] as const satisfies readonly BotKey[];
-export const PAPER_STRATEGY_KEYS = ["quant", "options", "vulcan", "universe"] as const satisfies readonly BotKey[];
+export const PAPER_STRATEGY_KEYS = ["quant", "options", "vulcan", "universe", "leveraged"] as const satisfies readonly BotKey[];
 export const CALENDAR_STRATEGY_KEYS = ["quant", "options", "crypto", "vulcan", "universe"] as const satisfies readonly BotKey[];
 
 export const ACTIVE_STATE_CACHE_KEYS = [
   "quant:scrap:state",
+  "leveraged-nasdaq",
 ] as const;
 
 export const RETIRED_CACHE_KEYS = [
