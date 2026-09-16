@@ -12,9 +12,9 @@ const BUY_USD = 50;
 // Probe the known hosts (same list as scripts/okx-check.mjs) to find which
 // one recognizes this key — OKX_API_KEY auth is currently failing (50119)
 // against the default host, so this narrows down the fix.
-const OKX_HOSTS = process.env.OKX_BASE
-  ? [process.env.OKX_BASE]
-  : ["https://www.okx.com", "https://my.okx.com", "https://aws.okx.com", "https://eea.okx.com", "https://app.okx.com"];
+// Probe all known hosts regardless of OKX_BASE — the pinned host is
+// currently failing too (50119), so the full sweep is the useful signal.
+const OKX_HOSTS = ["https://www.okx.com", "https://my.okx.com", "https://aws.okx.com", "https://eea.okx.com", "https://app.okx.com"];
 
 function okxSign(ts: string, method: string, path: string) {
   return crypto.createHmac("sha256", process.env.OKX_API_SECRET!).update(ts + method + path).digest("base64");
