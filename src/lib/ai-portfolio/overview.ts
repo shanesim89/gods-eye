@@ -135,10 +135,10 @@ async function cryptoStatus(userId: string): Promise<BotStatus> {
     label: `${o.token} ${o.status === "filled" ? "BUY" : o.status.toUpperCase()}`,
     detail:
       o.status === "filled"
-        ? `$${parseFloat(o.usd_amount).toFixed(0)}${o.price ? ` @ $${Math.round(parseFloat(o.price)).toLocaleString("en-US")}` : ""}${o.boosted ? " · boosted" : ""}`
+        ? `$${parseFloat(o.usd_amount).toFixed(0)}${o.price ? ` @ $${Math.round(parseFloat(o.price)).toLocaleString("en-US")}` : ""}`
         : o.status === "failed"
         ? (o.error ?? "order failed")
-        : (o.error ?? "skipped — not in buy-zone / cap / cadence"),
+        : (o.error ?? "skipped — no 8% drop / kill switch / balance"),
     tone: o.status === "filled" ? "buy" : o.status === "failed" ? "error" : "skip",
   }));
 

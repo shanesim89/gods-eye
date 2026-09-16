@@ -1,31 +1,19 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { Verdict } from "@/lib/council/types";
-import type { BuyZoneResult } from "@/lib/trading/buy-zone";
-import { resolveDirective } from "@/lib/council/directive";
-import { bandExplanation, verdictColor as vColor } from "@/lib/council/display";
-import { ConfidenceGauge } from "@/components/council/ConfidenceGauge";
-import { DirectiveCard } from "@/components/council/DirectiveCard";
 
 export type TokenRow = {
   token: string;
   price: number | null;
   changePct: number | null;
-  verdict: Verdict | null;
-  bz: BuyZoneResult;
-  plannedAmount: number;
-  boosted: boolean;
-  nextRun: Date | null;
+  high7d: number | null;
+  dropPct: number | null;
+  armed: boolean;
   qty: number;
   costBasis: number | null;
-  maxPrice: number | null;
   fillCount: number;
   lastOrder: { date: Date; amount: number; status: string; price: number | null } | null;
   spark: number[];
-  consecutiveSkips: number;
-  sellSkipThreshold: number;
-  maxConsecutiveSkips: number;
 };
 
 function usd(v: number | null | undefined, dec = 2): string {
@@ -115,35 +103,12 @@ function Sparkline({ data }: { data: number[] }) {
 }
 
 export function HudCard({ row }: { row: TokenRow }) {
-  const { token, price, changePct, verdict, bz, plannedAmount, boosted, nextRun,
-    qty, costBasis, maxPrice, fillCount, lastOrder, spark,
-    consecutiveSkips, sellSkipThreshold, maxConsecutiveSkips } = row;
+  const { token, price, changePct, high7d, dropPct, armed, qty, costBasis, fillCount, lastOrder, spark } = row;
 
   const currentValue = qty > 0 && price ? qty * price : null;
   const pnl = currentValue != null && costBasis != null ? currentValue - costBasis : null;
   const pnlPct = pnl != null && costBasis && costBasis > 0 ? (pnl / costBasis) * 100 : null;
-  const conf = verdict?.confidence ?? 0;
-  const verdictText = verdict?.verdict ?? "—";
-  const isOver = maxPrice != null && price != null && price > maxPrice;
-  const overPct = isOver && maxPrice && price ? (((price - maxPrice) / maxPrice) * 100).toFixed(1) : null;
-
-  const verdictColor = vColor(verdict?.verdict);
-
-  // Actionable directive (long-only spot → never short).
-  const directive = verdict
-    ? resolveDirective({
-        verdict: verdict.verdict,
-        confidence: verdict.confidence,
-        tradeLevels: verdict.tradeLevels,
-        currentPrice: price,
-        position: qty > 0 ? { held: true, qty, costBasis } : { held: false },
-        venue: "spot",
-      })
-    : null;
-
-  const isSkipRisk = verdict?.verdict === "SELL" && (verdict.confidence ?? 0) >= sellSkipThreshold && consecutiveSkips < maxConsecutiveSkips;
-  const isForcedNext = consecutiveSkips >= maxConsecutiveSkips;
-  const wasSkipped = consecutiveSkips > 0 && !isForcedNext;
+  const statusColor = armed ? "#27f59b" : "#5b7d8a";
 
   const cellStyle: React.CSSProperties = {
     border: "1px solid rgba(64,200,224,.12)", padding: "6px 8px",
@@ -180,8 +145,9 @@ export function HudCard({ row }: { row: TokenRow }) {
           <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: 3, color: "#ffcf4a", textShadow: "0 0 12px rgba(255,207,74,.5)" }}>
             {token}
           </div>
-          {/* mini confidence gauge (band primary, number small) */}
-          <ConfidenceGauge confidence={conf} color={verdictColor} size={46} />
+          <span style={{ fontSize: 8, fontWeight: 700, color: statusColor, textShadow: `0 0 8px ${statusColor}80`, letterSpacing: 1, textTransform: "uppercase" }}>
+            {armed ? "▶ ARMED" : "WATCHING"}
+          </span>
         </div>
         <div style={{ fontSize: 14, marginTop: 2, letterSpacing: .5, fontVariantNumeric: "tabular-nums" }}>
           {usd(price)}{" "}
@@ -191,28 +157,8 @@ export function HudCard({ row }: { row: TokenRow }) {
             </span>
           )}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: verdictColor, textShadow: `0 0 8px ${verdictColor}80`, letterSpacing: 1 }}>
-            {verdictText}
-          </span>
-          <span style={{ fontSize: 8, color: "#365360", textTransform: "uppercase", letterSpacing: 1 }}>
-            {bz.isBuyZone ? "▶ BUY-ZONE" : "WATCHING"}
-          </span>
-          {isForcedNext && (
-            <span style={{ fontSize: 7, fontWeight: 700, color: "#ff9500", background: "rgba(255,149,0,.12)", border: "1px solid rgba(255,149,0,.4)", padding: "1px 5px", letterSpacing: 1, textTransform: "uppercase" }}>
-              FORCED NEXT
-            </span>
-          )}
-          {wasSkipped && (
-            <span style={{ fontSize: 7, fontWeight: 700, color: "#ffcf4a", background: "rgba(255,207,74,.1)", border: "1px solid rgba(255,207,74,.35)", padding: "1px 5px", letterSpacing: 1, textTransform: "uppercase" }}>
-              SELL-SKIPPED ×{consecutiveSkips}
-            </span>
-          )}
-          {isSkipRisk && (
-            <span style={{ fontSize: 7, fontWeight: 700, color: "#ff5470", background: "rgba(255,84,112,.1)", border: "1px solid rgba(255,84,112,.4)", padding: "1px 5px", letterSpacing: 1, textTransform: "uppercase" }}>
-              SKIP RISK
-            </span>
-          )}
+        <div style={{ fontSize: 10, marginTop: 6, color: "#5b7d8a", fontVariantNumeric: "tabular-nums" }}>
+          7D HIGH {usd(high7d)} · DROP {dropPct != null ? `${dropPct.toFixed(1)}%` : "—"}
         </div>
       </div>
 
@@ -224,18 +170,6 @@ export function HudCard({ row }: { row: TokenRow }) {
         </div>
         <Sparkline data={spark} />
       </div>
-
-      {/* ── DIRECTIVE ── */}
-      {directive && (
-        <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(64,200,224,.15)" }}>
-          <DirectiveCard directive={directive} currency={verdict?.currency} variant="compact" />
-          {verdict && (
-            <div style={{ fontSize: 8.5, color: "#5b7d8a", fontStyle: "italic", marginTop: 5, lineHeight: 1.5 }}>
-              {bandExplanation(verdict.confidence, qty > 0 ? "holding" : "flat")}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ── POSITION ── */}
       <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(64,200,224,.15)" }}>
@@ -268,23 +202,13 @@ export function HudCard({ row }: { row: TokenRow }) {
       {/* ── FOOTER ── */}
       <div style={{ padding: "10px 14px", marginTop: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, padding: "4px 0" }}>
-          <span style={{ color: "#5b7d8a", letterSpacing: .5 }}>NEXT EXEC</span>
-          <span style={{ color: "#ffcf4a", fontVariantNumeric: "tabular-nums" }}>
-            {fmtDate(nextRun)} · {usd(plannedAmount, 0)}{boosted ? " ▲" : ""}
-          </span>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, padding: "4px 0", borderTop: "1px solid rgba(64,200,224,.07)" }}>
-          <span style={{ color: "#5b7d8a", letterSpacing: .5 }}>VS CEILING</span>
-          <span style={{ color: isOver ? "#ff5470" : "#27f59b", fontVariantNumeric: "tabular-nums" }}>
-            {maxPrice == null
-              ? "NO CEIL"
-              : isOver
-                ? `+${overPct}% OVER`
-                : `−${(((maxPrice - (price ?? 0)) / maxPrice) * 100).toFixed(1)}% UNDER`}
+          <span style={{ color: "#5b7d8a", letterSpacing: .5 }}>TRIGGER</span>
+          <span style={{ color: statusColor, fontVariantNumeric: "tabular-nums" }}>
+            {armed ? "$50 BUY ARMED" : "8% DROP NEEDED"}
           </span>
         </div>
         {lastOrder && (
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, padding: "4px 0", color: "#365360" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, padding: "4px 0", borderTop: "1px solid rgba(64,200,224,.07)", color: "#365360" }}>
             <span>LAST {fmtDate(lastOrder.date)}</span>
             <span style={{ color: lastOrder.status === "filled" ? "#27f59b" : lastOrder.status === "failed" ? "#ff5470" : "#5b7d8a", textTransform: "uppercase" }}>
               {lastOrder.status}

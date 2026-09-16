@@ -18,7 +18,7 @@ export const ACTIVE_STRATEGIES = [
     href: "/ai-portfolio/crypto",
     mode: "LIVE",
     asset: "BTC·ETH·SOL·HYPE",
-    description: "BTC · ETH · SOL · HYPE — live bi-weekly DCA + council buy-zone boost.",
+    description: "BTC · ETH · SOL · HYPE — $50 buy on 8% drop from 7-day high, Mon-Thu.",
   },
   {
     key: "options",

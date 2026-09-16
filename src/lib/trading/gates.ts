@@ -7,12 +7,9 @@
 
 export const DCA_GATES = [
   "kill_switch",
-  "due",
-  "price_ceiling",
-  "council",
-  "sell_skip",
-  "buy_zone",
-  "monthly_cap",
+  "weekday",
+  "drop_check",
+  "claim",
   "balance",
   "execute",
 ] as const;
@@ -40,12 +37,9 @@ export type GateTrace = { v: 1; gates: GateEntry[] };
 
 export const GATE_LABELS: Record<string, string> = {
   kill_switch: "KILL SWITCH",
-  due: "CADENCE DUE",
-  price_ceiling: "PRICE CEILING",
-  council: "COUNCIL VERDICT",
-  sell_skip: "SELL-SKIP",
-  buy_zone: "BUY-ZONE SIZING",
-  monthly_cap: "MONTHLY CAP",
+  weekday: "MON-THU",
+  drop_check: "8% DROP",
+  claim: "IDEMPOTENCY",
   balance: "BALANCE",
   execute: "EXECUTE",
   settle: "SETTLEMENT",

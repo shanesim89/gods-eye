@@ -11,21 +11,9 @@ export type OrderRow = {
   usdAmount: number;
   qty: number | null;
   price: number | null;
-  boosted: boolean;
-  verdict: string | null;
-  confidence: number | null;
-  dipDepthPct: number | null;
   error: string | null;
   exchangeOrderId: string | null;
   gateTrace: GateTrace | null; // null on rows written before trace deploy
-};
-
-export type TokenPlan = {
-  nextRunAt: string | null; // ISO
-  plannedUsd: number;
-  boostUsd: number;
-  consecutiveSkips: number;
-  maxSkips: number;
 };
 
 const TOKEN_COLOR: Record<string, string> = {
@@ -54,7 +42,7 @@ function fmtDateTime(iso: string): string {
 
 type Filter = "all" | "filled" | "skipped" | "failed";
 
-export function OrderLog({ orders, planByToken = {} }: { orders: OrderRow[]; planByToken?: Record<string, TokenPlan> }) {
+export function OrderLog({ orders }: { orders: OrderRow[] }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -125,8 +113,8 @@ export function OrderLog({ orders, planByToken = {} }: { orders: OrderRow[]; pla
       ) : (
         <div style={{ display: "flex", flexDirection: "column" }}>
           {/* header row */}
-          <div style={{ display: "grid", gridTemplateColumns: "92px 56px 1fr 84px 96px 70px", gap: 8, padding: "0 8px 6px", fontSize: 7, letterSpacing: 1, color: "#5b7d8a", textTransform: "uppercase", borderBottom: "1px solid rgba(64,200,224,.15)" }}>
-            <span>WHEN</span><span>TOKEN</span><span>VERDICT</span><span style={{ textAlign: "right" }}>AMOUNT</span><span style={{ textAlign: "right" }}>FILL PRICE</span><span style={{ textAlign: "right" }}>STATUS</span>
+          <div style={{ display: "grid", gridTemplateColumns: "92px 56px 1fr 96px 70px", gap: 8, padding: "0 8px 6px", fontSize: 7, letterSpacing: 1, color: "#5b7d8a", textTransform: "uppercase", borderBottom: "1px solid rgba(64,200,224,.15)" }}>
+            <span>WHEN</span><span>TOKEN</span><span style={{ textAlign: "right" }}>AMOUNT</span><span style={{ textAlign: "right" }}>FILL PRICE</span><span style={{ textAlign: "right" }}>STATUS</span>
           </div>
           {shown.map((o) => {
             const tc = TOKEN_COLOR[o.token] ?? "#3fd0e0";
@@ -136,21 +124,10 @@ export function OrderLog({ orders, planByToken = {} }: { orders: OrderRow[]; pla
               <div key={o.id} style={{ borderBottom: "1px solid rgba(64,200,224,.06)" }}>
                 <div
                   onClick={() => setExpanded(isExp ? null : o.id)}
-                  style={{ display: "grid", gridTemplateColumns: "92px 56px 1fr 84px 96px 70px", gap: 8, padding: "8px", alignItems: "center", cursor: "pointer", fontSize: 10, fontVariantNumeric: "tabular-nums", background: isExp ? "rgba(70,224,245,.04)" : "transparent" }}
+                  style={{ display: "grid", gridTemplateColumns: "92px 56px 1fr 96px 70px", gap: 8, padding: "8px", alignItems: "center", cursor: "pointer", fontSize: 10, fontVariantNumeric: "tabular-nums", background: isExp ? "rgba(70,224,245,.04)" : "transparent" }}
                 >
                   <span style={{ color: "#8fb8c4" }}>{fmtDateTime(o.date)}</span>
                   <span style={{ color: tc, fontWeight: 700, letterSpacing: 1 }}>{o.token}</span>
-                  <span style={{ color: "#8fb8c4" }}>
-                    {o.verdict ? (
-                      <>
-                        <span style={{ color: o.verdict === "BUY" ? "#27f59b" : o.verdict === "SELL" ? "#ff5470" : "#ffcf4a", fontWeight: 700 }}>{o.verdict}</span>
-                        {o.confidence != null && <span style={{ color: "#5b7d8a" }}> {o.confidence}%</span>}
-                        {o.boosted && <span style={{ color: "#ffcf4a", marginLeft: 4 }}>▲BOOST</span>}
-                      </>
-                    ) : (
-                      <span style={{ color: "#365360" }}>—</span>
-                    )}
-                  </span>
                   <span style={{ textAlign: "right", color: "#bfe9f2" }}>{usd(o.usdAmount)}</span>
                   <span style={{ textAlign: "right", color: o.price ? "#bfe9f2" : "#365360" }}>{o.price ? usd(o.price) : "—"}</span>
                   <span style={{ textAlign: "right", color: sc, textTransform: "uppercase", fontSize: 9, fontWeight: 700 }}>{o.status}</span>
@@ -198,25 +175,8 @@ export function OrderLog({ orders, planByToken = {} }: { orders: OrderRow[]; pla
                       )}
                     </div>
 
-                    {/* what the strategy plans next for this token */}
-                    {planByToken[o.token] && (
-                      <div style={{ gridColumn: "1 / -1", border: "1px solid rgba(64,200,224,.1)", background: "rgba(70,224,245,.02)", padding: "6px 8px" }}>
-                        <div style={{ fontSize: 7, letterSpacing: 1, color: "#5b7d8a", textTransform: "uppercase" }}>PLAN FOR {o.token}</div>
-                        <div style={{ fontSize: 9, color: "#8fb8c4", marginTop: 3, lineHeight: 1.6, fontVariantNumeric: "tabular-nums" }}>
-                          {(() => {
-                            const p = planByToken[o.token];
-                            const next = p.nextRunAt
-                              ? new Date(p.nextRunAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }).toUpperCase()
-                              : "DUE NOW";
-                            return `NEXT RUN ${next} · PLANNED ${usd(p.plannedUsd, 0)} (BOOST ${usd(p.boostUsd, 0)} if dip) · SKIPS ${p.consecutiveSkips}/${p.maxSkips}`;
-                          })()}
-                        </div>
-                      </div>
-                    )}
-
                     {[
                       { l: "QTY FILLED", v: o.qty != null ? o.qty.toFixed(8) : "—" },
-                      { l: "DIP DEPTH", v: o.dipDepthPct != null ? `${o.dipDepthPct.toFixed(1)}%` : "—" },
                       { l: "EXCHANGE OID", v: o.exchangeOrderId ?? "—" },
                     ].map(({ l, v }) => (
                       <div key={l} style={{ border: "1px solid rgba(64,200,224,.1)", background: "rgba(70,224,245,.02)", padding: "6px 8px" }}>

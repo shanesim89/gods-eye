@@ -6,9 +6,6 @@ import { HudCard, type TokenRow } from "./HudCard";
 import { PortfolioSummary } from "./PortfolioSummary";
 import { StrategyThesis } from "./StrategyThesis";
 import { OrderLog } from "./OrderLog";
-import { CouncilReasoning } from "./CouncilReasoning";
-import { StrategyPlan } from "./StrategyPlan";
-import { verdictColor } from "@/lib/council/display";
 import type { CryptoDashboardData } from "@/lib/trading/crypto-dashboard";
 
 const TOKEN_COLOR: Record<string, string> = {
@@ -27,7 +24,6 @@ function usd(v: number | null | undefined, dec = 2): string {
 function toHudRows(data: CryptoDashboardData): TokenRow[] {
   return data.rows.map((r) => ({
     ...r,
-    nextRun: r.nextRun ? new Date(r.nextRun) : null,
     lastOrder: r.lastOrder ? { ...r.lastOrder, date: new Date(r.lastOrder.date) } : null,
   }));
 }
@@ -38,7 +34,6 @@ export function CryptoLive({ initial }: { initial: CryptoDashboardData }) {
     initial,
   );
 
-  const spentPct = state.cap > 0 ? Math.min(100, (state.spent / state.cap) * 100) : 0;
   const hudRows = toHudRows(state);
   const stale = secsAgo > 90;
 
@@ -59,17 +54,11 @@ export function CryptoLive({ initial }: { initial: CryptoDashboardData }) {
           <span className="text-muted text-[12px] uppercase tracking-[1px]">STATUS</span>
           <KillSwitchClient initialKillSwitch={initial.killSwitch} />
         </div>
-        <div className="flex-1 min-w-[200px]">
-          <div className="flex justify-between text-[12px] uppercase tracking-[1px] mb-1">
-            <span className="text-muted">MONTH SPEND</span>
-            <span className="text-amber tabular-nums">{usd(state.spent)} / {usd(state.cap)}</span>
-          </div>
-          <div className="h-1.5 bg-black border border-border">
-            <div className={`h-full ${spentPct >= 100 ? "bg-red" : "bg-amber"}`} style={{ width: `${spentPct}%` }} />
-          </div>
-        </div>
         <div className="text-[12px] text-dim uppercase tracking-[1px]">
-          DCA {usd(state.dca, 0)} · BOOST {usd(state.boost, 0)} · MIN CONF {state.minConf}%
+          BUY {usd(state.buyUsd, 0)} on 8% DROP · MON–THU
+        </div>
+        <div className="text-[12px] text-dim uppercase tracking-[1px] ml-auto">
+          SPENT MTD {usd(state.spent)}
         </div>
       </div>
 
@@ -97,32 +86,30 @@ export function CryptoLive({ initial }: { initial: CryptoDashboardData }) {
       <div className="border border-cyan/30 bg-grid p-3 mb-4">
         <div className="text-cyan text-[12px] uppercase tracking-[1.5px] mb-2">◉ OBSERVING</div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {state.rows.map((r) => {
-            const isOver = r.maxPrice != null && r.price != null && r.price > r.maxPrice;
-            const vColor = verdictColor(r.verdict?.verdict);
-            return (
-              <div key={r.token} className="border border-border bg-bg/40 p-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold tracking-[1px]" style={{ color: TOKEN_COLOR[r.token] }}>{r.token}</span>
-                  <span className="text-[10px] font-bold" style={{ color: vColor }}>{r.verdict?.verdict ?? "—"}</span>
-                </div>
-                <div className="text-cyan font-bold tabular-nums text-[15px]">{usd(r.price)}</div>
-                <div className={`text-[10px] ${isOver ? "text-red" : "text-green"}`}>
-                  {r.maxPrice == null ? "no ceiling" : isOver ? "over ceiling" : "under ceiling"}
-                </div>
+          {state.rows.map((r) => (
+            <div key={r.token} className="border border-border bg-bg/40 p-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold tracking-[1px]" style={{ color: TOKEN_COLOR[r.token] }}>{r.token}</span>
+                <span className={`text-[10px] font-bold ${r.armed ? "text-green" : "text-dim"}`}>
+                  {r.armed ? "ARMED" : "WATCHING"}
+                </span>
               </div>
-            );
-          })}
+              <div className="text-cyan font-bold tabular-nums text-[15px]">{usd(r.price)}</div>
+              <div className={`text-[10px] ${r.armed ? "text-green" : "text-dim"}`}>
+                {r.dropPct == null ? "no data" : r.dropPct >= 0 ? `${r.dropPct.toFixed(1)}% below high` : `${Math.abs(r.dropPct).toFixed(1)}% above high`}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Price action — candles + buy fills + ceiling line, per token */}
+      {/* Price action — candles + buy fills + 7d-high line, per token */}
       <div className="border border-border bg-grid p-3 mb-4">
         <div className="flex items-center justify-between mb-2">
           <div className="text-muted text-[12px] uppercase tracking-[1px]">PRICE ACTION · ~4D CANDLES</div>
           <div className="flex items-center gap-3 text-[10px] text-dim">
             <span><span className="text-green">▲</span> buy fill</span>
-            <span><span className="text-red">┄</span> ceiling</span>
+            <span><span className="text-red">┄</span> 7d high</span>
             <span><span className="text-amber">┄</span> now</span>
           </div>
         </div>
@@ -133,7 +120,7 @@ export function CryptoLive({ initial }: { initial: CryptoDashboardData }) {
               <TokenCandleChart
                 bars={state.candles[r.token] ?? []}
                 orders={state.orderLog.filter((o) => o.token === r.token)}
-                maxPrice={r.maxPrice}
+                high7d={r.high7d}
                 lastPrice={r.price}
                 height={180}
               />
@@ -143,18 +130,9 @@ export function CryptoLive({ initial }: { initial: CryptoDashboardData }) {
       </div>
 
       <StrategyThesis
-        dca={state.dca}
-        boost={state.boost}
-        cap={state.cap}
-        minConf={state.minConf}
-        sellSkipThreshold={state.sellSkipThreshold}
-        maxConsecutiveSkips={state.maxConsecutiveSkips}
-        tokens={state.thesis}
+        buyUsd={state.buyUsd}
+        tokens={state.rows.map((r) => ({ token: r.token, price: r.price, high7d: r.high7d, dropPct: r.dropPct, armed: r.armed }))}
       />
-
-      <StrategyPlan rows={state.planRows} spent={state.spent} cap={state.cap} killSwitch={state.killSwitch} />
-
-      <CouncilReasoning entries={state.reasoning} />
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
         {hudRows.map((row) => (
@@ -162,7 +140,7 @@ export function CryptoLive({ initial }: { initial: CryptoDashboardData }) {
         ))}
       </div>
 
-      <OrderLog orders={state.orderLog} planByToken={state.planByToken} />
+      <OrderLog orders={state.orderLog} />
     </>
   );
 }

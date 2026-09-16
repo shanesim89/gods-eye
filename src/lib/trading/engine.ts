@@ -1,21 +1,21 @@
 import "server-only";
 import { and, eq, lt } from "drizzle-orm";
 import { db } from "@/db/client";
-import { atomicCapClaim } from "@/db/cap-claim";
-import { ai_trading_settings, ai_token_schedule, ai_trade_orders, assets } from "@/db/schema";
-import { runCouncil } from "@/lib/council/run";
+import { claimOrder } from "@/db/cap-claim";
+import { ai_trading_settings, ai_trade_orders, assets } from "@/db/schema";
+import { getPriceHistory } from "@/lib/market";
 import { adapterFor, venueFor } from "./router";
-import { evaluateBuyZone, orderAmountUsd } from "./buy-zone";
 import { newTrace } from "./gates";
 
-const DEFAULT_CADENCE_DAYS = 14;
-const DAY_MS = 86_400_000;
+const DROP_TRIGGER_PCT = 0.08;
+const BUY_USD = 50;
+// Mon=1 .. Thu=4 (UTC) — the only days a triggered drop is allowed to execute.
+const EXEC_WEEKDAYS = new Set([1, 2, 3, 4]);
 
 export type TokenOutcome = {
   token: string;
   status: "filled" | "failed" | "skipped";
   amount?: number;
-  boosted?: boolean;
   reason?: string;
 };
 
@@ -25,8 +25,8 @@ export type DcaRunResult = {
   outcomes: TokenOutcome[];
 };
 
-function periodKey(due: Date): string {
-  return due.toISOString().slice(0, 10);
+function periodKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
 }
 
 // Surface orders stuck in `pending` (claimed but never resolved → likely a crash
@@ -91,7 +91,7 @@ async function creditHolding(userId: string, token: string, qty: number, costUsd
 }
 
 // Core DCA engine for one user. Guardrail order:
-// kill-switch → due → idempotency claim → council → buy-zone → cap → balance → execute.
+// kill-switch → dip-trigger (one-shot) → per-token: weekday → 7d-rolling-high 8%-drop → claim → balance → execute.
 export async function runDcaForUser(
   userId: string,
   opts: { force?: boolean } = {}
@@ -108,23 +108,17 @@ export async function runDcaForUser(
   if (settings.kill_switch) return { ran: false, reason: "kill_switch active (halted)", outcomes: [] };
 
   const tokens = (settings.tokens as string[]) ?? [];
-  const cap = parseFloat(settings.monthly_cap_usd);
-  const dca = parseFloat(settings.dca_amount_usd);
-  const boost = parseFloat(settings.boost_amount_usd);
-  const minConf = settings.buy_zone_confidence;
-  const overrides = (settings.token_overrides as Record<string, { max_price?: number; cadence_days?: number }>) ?? {};
   const now = new Date();
-
   const outcomes: TokenOutcome[] = [];
 
   await alertStalePending(userId, now);
 
   // ── GUARDRAIL 2b: one-shot BTC-dip trigger ───────────────────────────────
   // When armed and BTC trades below the threshold, fire an UNCONDITIONAL buy of
-  // dip_trigger_amount across every token — ignores council + price ceilings
-  // (deliberate "buy the crash" event), still bounded by the monthly cap and
-  // available balance. Fires once, disarms, then this run returns so normal
-  // council DCA resumes on the next invocation (no double-spend same run).
+  // dip_trigger_amount across every token — bypasses the weekday/drop-check
+  // gates below (deliberate "buy the crash" event), still bounded by available
+  // balance. Fires once, disarms, then this run returns so the normal
+  // drop-check loop resumes on the next invocation (no double-spend same run).
   if (settings.dip_trigger_enabled && !settings.dip_trigger_fired) {
     const threshold = Number(settings.dip_trigger_price ?? 0);
     const dipAmount = Number(settings.dip_trigger_amount ?? 0);
@@ -137,21 +131,16 @@ export async function runDcaForUser(
     if (threshold > 0 && dipAmount > 0 && btcPrice > 0 && btcPrice < threshold) {
       // Re-arm nonce: settings.updated_at changes every time the user re-arms
       // (sets dip_trigger_fired=false), so the same threshold can fire again.
-      // Without it the key collided with the prior fire → silent no-op re-arm.
       const armNonce = settings.updated_at.getTime();
       for (const token of tokens) {
-        const trace = newTrace().pass("kill_switch").pass("dip_trigger", `BTC ${btcPrice} < ${threshold}`);
+        const trace = newTrace().pass("kill_switch");
         const idemKey = `${userId}:${token}:dip:${threshold}:${armNonce}`;
         try {
-          const claim = await atomicCapClaim({
-            userId, token, venue: venueFor(token),
-            amountUsd: dipAmount, capUsd: cap, idemKey, dcaAmountUsd: dipAmount,
+          const claim = await claimOrder({
+            userId, token, venue: venueFor(token), amountUsd: dipAmount, idemKey,
           });
           if (!claim.claimed) {
-            outcomes.push({
-              token, status: "skipped", amount: dipAmount,
-              reason: claim.reason === "cap_exceeded" ? "dip: monthly cap" : "dip: already bought",
-            });
+            outcomes.push({ token, status: "skipped", amount: dipAmount, reason: "dip: already bought" });
             continue;
           }
           const adapter = adapterFor(token);
@@ -179,7 +168,7 @@ export async function runDcaForUser(
           outcomes.push({ token, status: "failed", reason: msg });
         }
       }
-      // One-shot: disarm so it never re-fires; council DCA resumes next run.
+      // One-shot: disarm so it never re-fires; the drop-check loop resumes next run.
       await db.update(ai_trading_settings)
         .set({
           dip_trigger_fired: true,
@@ -191,171 +180,77 @@ export async function runDcaForUser(
     }
   }
 
-  // GUARDRAIL: dip trigger is the first-ever buy. Block cadence until it fires.
+  // GUARDRAIL: armed-but-not-fired dip trigger is the first-ever buy. Block the
+  // drop-check loop until it fires.
   if (settings.dip_trigger_enabled && !settings.dip_trigger_fired) {
     return {
       ran: false,
-      reason: `waiting for BTC dip trigger ($${Number(settings.dip_trigger_price).toLocaleString()}) — cadence blocked until first buy fires`,
+      reason: `waiting for BTC dip trigger ($${Number(settings.dip_trigger_price).toLocaleString()}) — blocked until first buy fires`,
       outcomes: [],
     };
   }
 
-  const schedRows = await db
-    .select()
-    .from(ai_token_schedule)
-    .where(eq(ai_token_schedule.user_id, userId));
-  const schedByToken = new Map(schedRows.map((r) => [r.token, r]));
+  const isExecDay = opts.force || EXEC_WEEKDAYS.has(now.getUTCDay());
 
-  // Fairness: process the most-overdue tokens first (oldest next_run_at). The
-  // cron has a 60s function-duration cap and council is ~9 sequential LLM calls
-  // per token, so a run can be killed mid-loop. Fixed array order would always
-  // starve the same tail tokens; sorting by due time guarantees the
-  // longest-waiting token is served each run. Missing schedule = first run =
-  // top priority (epoch 0).
-  const orderedTokens = [...tokens].sort((a, b) => {
-    const dueA = schedByToken.get(a)?.next_run_at?.getTime() ?? 0;
-    const dueB = schedByToken.get(b)?.next_run_at?.getTime() ?? 0;
-    return dueA - dueB;
-  });
-
-  // Council is ~9 sequential LLM calls per token; on Hobby's 60s function cap a
-  // single run can only afford a few. Cap councils per invocation so the loop
-  // never times out mid-write. Deferred tokens keep their (overdue) next_run, so
-  // fairness ordering serves them first on the next daily run.
-  const MAX_COUNCIL_PER_RUN = 1;
-  let councilRuns = 0;
-
-  for (const token of orderedTokens) {
-    // Per-run gate trace, persisted onto whatever order row this iteration writes.
+  for (const token of tokens) {
     const trace = newTrace().pass("kill_switch");
+    const idemKey = `${userId}:${token}:drop:${periodKey(now)}`;
     try {
-      const sched = schedByToken.get(token);
-      const due = sched?.next_run_at ?? now; // missing schedule → due now (first run)
-
-      // GUARDRAIL 2: due-check (per-token 14-day cadence).
-      if (!opts.force && due > now) {
-        outcomes.push({ token, status: "skipped", reason: "not due" });
-        continue;
-      }
-      trace.pass("due", opts.force ? "forced run" : undefined);
-
-      const idemKey = `${userId}:${token}:${periodKey(due)}`;
       const adapter = adapterFor(token);
-      const cadenceDays = overrides[token]?.cadence_days ?? DEFAULT_CADENCE_DAYS;
-
-      // GUARDRAIL 3b: per-token price ceiling — checked BEFORE council so we don't
-      // pay council cost (≈9 Anthropic calls) on tokens that will skip anyway.
-      // Price-ceiling skips don't claim an order row; schedule update is sufficient.
       const price = await adapter.getPrice(token);
-      const maxPrice = overrides[token]?.max_price;
-      if (maxPrice !== undefined && price > maxPrice) {
-        const recheckAt = new Date(now.getTime() + DAY_MS);
-        await db
-          .insert(ai_token_schedule)
-          .values({ user_id: userId, token, next_run_at: recheckAt, consecutive_skips: 0 })
-          .onConflictDoUpdate({
-            target: [ai_token_schedule.user_id, ai_token_schedule.token],
-            set: { next_run_at: recheckAt, updated_at: now },
-          });
-        await setAlert(userId, `${token} skipped — price ${price} above ceiling ${maxPrice}, recheck ${recheckAt.toISOString().slice(0, 10)}`);
-        outcomes.push({ token, status: "skipped", reason: `price ${price} > max ${maxPrice} (daily recheck)` });
-        continue;
-      }
-      trace.pass("price_ceiling", maxPrice !== undefined ? `price ${price} ≤ ceiling ${maxPrice}` : "no ceiling set");
+      const history = await getPriceHistory(token, 7);
+      const high = history && history.length > 0 ? Math.max(...history, price) : null;
 
-      // GUARDRAIL 3b-3: idempotency pre-check — skip council if this period's order
-      // already exists (any status). Prevents a prior failed/pending order row from
-      // burning the council budget slot on every subsequent run until the schedule advances.
-      const existingOrder = await db
-        .select({ id: ai_trade_orders.id })
-        .from(ai_trade_orders)
-        .where(eq(ai_trade_orders.idempotency_key, idemKey))
-        .limit(1);
-      if (existingOrder.length > 0) {
-        // Period already claimed — advance schedule so this token doesn't block others.
-        const retryAt = new Date(now.getTime() + DAY_MS);
-        await db
-          .insert(ai_token_schedule)
-          .values({ user_id: userId, token, next_run_at: retryAt, consecutive_skips: 0 })
-          .onConflictDoUpdate({
-            target: [ai_token_schedule.user_id, ai_token_schedule.token],
-            set: { next_run_at: retryAt, updated_at: now },
-          });
-        outcomes.push({ token, status: "skipped", reason: "already processed this period" });
+      if (high == null) {
+        trace.skip("weekday").skip("drop_check", "no 7d price history available");
+        outcomes.push({ token, status: "skipped", reason: "no price history" });
         continue;
       }
 
-      // GUARDRAIL 3b-2: council budget — stay under the 60s function cap. Defer
-      // this token (leave schedule untouched → still due → picked up first next
-      // run via fairness ordering) rather than risk a mid-loop timeout.
-      if (councilRuns >= MAX_COUNCIL_PER_RUN) {
-        outcomes.push({ token, status: "skipped", reason: "council budget reached this run — deferred to next run" });
+      const dropPct = (high - price) / high;
+
+      if (dropPct < DROP_TRIGGER_PCT) {
+        trace
+          .pass("weekday", isExecDay ? "Mon-Thu" : "weekend/Fri (monitoring only)")
+          .skip("drop_check", `${(dropPct * 100).toFixed(2)}% below 7d high $${high.toFixed(2)} (need ${DROP_TRIGGER_PCT * 100}%)`);
+        outcomes.push({ token, status: "skipped", reason: `drop ${(dropPct * 100).toFixed(1)}% < 8%` });
         continue;
       }
 
-      // Council (in-process, cached) → verdict. Only reached when price ≤ ceiling.
-      const verdict = await runCouncil(userId, "crypto", token);
-      councilRuns++;
-      trace.pass("council", `${verdict.verdict} ${verdict.confidence}%`);
+      if (!isExecDay) {
+        trace
+          .skip("weekday", "8% drop hit but execution only fires Mon-Thu (UTC)")
+          .pass("drop_check", `${(dropPct * 100).toFixed(2)}% below 7d high $${high.toFixed(2)}`);
+        outcomes.push({ token, status: "skipped", amount: BUY_USD, reason: "8% drop hit but not Mon-Thu" });
+        continue;
+      }
 
-      // Sell-skip gate removed — long-term accumulation mode, always buy regardless of verdict direction.
-      trace.pass("sell_skip", "long-term hold: sell signals ignored");
+      trace
+        .pass("weekday", "Mon-Thu")
+        .pass("drop_check", `${(dropPct * 100).toFixed(2)}% below 7d high $${high.toFixed(2)}`);
 
-      const bz = evaluateBuyZone(verdict, price, minConf);
-      const { amount, boosted } = orderAmountUsd(bz.isBuyZone, dca, boost);
-      trace.pass("buy_zone", boosted ? `buy-zone hit — boosted $${amount}` : `base size $${amount}`);
-
-      // GUARDRAIL 4: atomic monthly cap check + idempotency claim in one serializable
-      // transaction. Concurrent cron runs serialize here — no double-buy on stale data.
-      const claim = await atomicCapClaim({
-        userId,
-        token,
-        venue: venueFor(token),
-        amountUsd: amount,
-        capUsd: cap,
-        idemKey,
-        dcaAmountUsd: dca,
-      });
-
+      const claim = await claimOrder({ userId, token, venue: venueFor(token), amountUsd: BUY_USD, idemKey });
       if (!claim.claimed) {
-        if (claim.reason === "cap_exceeded") {
-          await setAlert(userId, `${token} skipped — monthly cap reached`);
-          outcomes.push({ token, status: "skipped", amount, reason: "monthly cap" });
-        } else {
-          outcomes.push({ token, status: "skipped", reason: "already processed this period" });
-        }
+        trace.skip("claim", "already bought today");
+        outcomes.push({ token, status: "skipped", reason: "already processed today" });
         continue;
       }
+      trace.pass("claim");
 
-      const { orderId } = claim;
-      trace.pass("monthly_cap", `$${claim.spentAfter.toFixed(2)} after this order`);
-
-      // GUARDRAIL 5: min exchange balance.
       const balance = await adapter.getUsdBalance();
-      if (balance < amount) {
-        trace.halt("balance", `insufficient: $${balance.toFixed(2)} < $${amount.toFixed(2)}`);
+      if (balance < BUY_USD) {
+        trace.halt("balance", `insufficient: $${balance.toFixed(2)} < $${BUY_USD}`);
         await db
           .update(ai_trade_orders)
-          .set({
-            status: "skipped",
-            usd_amount: amount.toFixed(2),
-            boosted,
-            council_verdict: verdict.verdict,
-            council_confidence: verdict.confidence,
-            dip_depth_pct: bz.dipDepthPct != null ? bz.dipDepthPct.toFixed(2) : null,
-            error: `insufficient balance: ${balance} < ${amount}`,
-            gate_trace: trace.done(),
-          })
-          .where(eq(ai_trade_orders.id, orderId));
-        await setAlert(userId, `${token} skipped — balance ${balance} < ${amount}`);
-        outcomes.push({ token, status: "skipped", amount, reason: "insufficient balance" });
+          .set({ status: "skipped", usd_amount: BUY_USD.toFixed(2), error: `insufficient balance: ${balance} < ${BUY_USD}`, gate_trace: trace.done() })
+          .where(eq(ai_trade_orders.id, claim.orderId));
+        await setAlert(userId, `${token} skipped — balance ${balance} < ${BUY_USD}`);
+        outcomes.push({ token, status: "skipped", amount: BUY_USD, reason: "insufficient balance" });
         continue;
       }
-
       trace.pass("balance", `$${balance.toFixed(2)} available`);
 
-      // Execute.
-      const fill = await adapter.marketBuy(token, amount);
+      const fill = await adapter.marketBuy(token, BUY_USD);
       const fillUsd = fill.qty * fill.price; // actual notional (floor + slippage), not requested
       trace.pass("execute", `filled ${fill.qty.toFixed(8)} @ ${fill.price}`);
       await db
@@ -365,52 +260,21 @@ export async function runDcaForUser(
           usd_amount: fillUsd.toFixed(2),
           qty: fill.qty.toFixed(8),
           price: fill.price.toFixed(8),
-          boosted,
-          council_verdict: verdict.verdict,
-          council_confidence: verdict.confidence,
-          dip_depth_pct: bz.dipDepthPct != null ? bz.dipDepthPct.toFixed(2) : null,
           exchange_order_id: fill.orderId,
           gate_trace: trace.done(),
         })
-        .where(eq(ai_trade_orders.id, orderId));
+        .where(eq(ai_trade_orders.id, claim.orderId));
 
-      // Reflect the fill in holdings so the dashboard shows real position + P&L.
       await creditHolding(userId, token, fill.qty, fillUsd);
-
-      // Advance cadence: next run from now, reset skip counter.
-      const nextRun = new Date(now.getTime() + cadenceDays * DAY_MS);
-      await db
-        .insert(ai_token_schedule)
-        .values({ user_id: userId, token, next_run_at: nextRun, consecutive_skips: 0 })
-        .onConflictDoUpdate({
-          target: [ai_token_schedule.user_id, ai_token_schedule.token],
-          set: { next_run_at: nextRun, consecutive_skips: 0, updated_at: now },
-        });
-
-      outcomes.push({ token, status: "filled", amount, boosted });
+      outcomes.push({ token, status: "filled", amount: BUY_USD });
     } catch (err) {
-      // GUARDRAIL 6: halt-on-error — mark failed, alert, never retry this period, continue to next token.
       const msg = err instanceof Error ? err.message : "unknown error";
-      const idemKey = `${userId}:${token}:${periodKey(schedByToken.get(token)?.next_run_at ?? now)}`;
-      // trace was mutated up to the gate that threw; remaining gates read not_reached.
       await db
         .update(ai_trade_orders)
         .set({ status: "failed", error: msg, gate_trace: trace.done() })
         .where(eq(ai_trade_orders.idempotency_key, idemKey));
       await setAlert(userId, `${token} FAILED — ${msg}`);
       outcomes.push({ token, status: "failed", reason: msg });
-
-      // Advance schedule on failure so this token doesn't starve others on next run.
-      // Failed tokens retry after 1 day (not the full cadence — still overdue relative
-      // to working tokens but no longer pinned at epoch-0 forever).
-      const failRetryAt = new Date(now.getTime() + DAY_MS);
-      await db
-        .insert(ai_token_schedule)
-        .values({ user_id: userId, token, next_run_at: failRetryAt, consecutive_skips: 0 })
-        .onConflictDoUpdate({
-          target: [ai_token_schedule.user_id, ai_token_schedule.token],
-          set: { next_run_at: failRetryAt, updated_at: now },
-        });
     }
   }
 

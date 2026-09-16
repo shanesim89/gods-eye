@@ -25,13 +25,13 @@ export type BuyOrderMarker = { date: string; price: number | null; status: strin
 export function TokenCandleChart({
   bars,
   orders = [],
-  maxPrice,
+  high7d,
   lastPrice,
   height = 220,
 }: {
   bars: CandleBar[];
   orders?: BuyOrderMarker[];
-  maxPrice?: number | null;
+  high7d?: number | null;
   lastPrice?: number | null;
   height?: number;
 }) {
@@ -132,14 +132,14 @@ export function TokenCandleChart({
       candle.removePriceLine(ceilLineRef.current);
       ceilLineRef.current = null;
     }
-    if (maxPrice != null) {
+    if (high7d != null) {
       ceilLineRef.current = candle.createPriceLine({
-        price: maxPrice,
+        price: high7d,
         color: RED,
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: "ceiling",
+        title: "7d high",
       });
     }
 
@@ -159,7 +159,7 @@ export function TokenCandleChart({
     }
 
     chart.timeScale().fitContent();
-  }, [bars, orders, maxPrice, lastPrice]);
+  }, [bars, orders, high7d, lastPrice]);
 
   if (bars.length < 2) {
     return (
