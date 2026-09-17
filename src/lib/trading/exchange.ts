@@ -1,6 +1,6 @@
 import "server-only";
 
-export type Venue = "okx" | "hyperliquid" | "binance";
+export type Venue = "okx" | "binance";
 
 export type MarketBuyResult = {
   orderId: string;
