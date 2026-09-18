@@ -20,17 +20,19 @@ export function CollapsiblePanel({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className={`bg-panel border border-border flex flex-col overflow-hidden ${className}`}>
+    <div
+      className={`bg-panel border border-border rounded-xl flex flex-col overflow-hidden hud-glow ${className}`}
+    >
       <button
         onClick={() => setOpen((v) => !v)}
-        className="bg-black border-b border-border px-2.5 py-1.5 flex justify-between items-center text-[10px] tracking-[1.5px] text-amber uppercase hover:bg-amber/5 transition-colors text-left"
+        className="px-3.5 pt-3 pb-2 flex justify-between items-baseline gap-3 text-[10px] tracking-[1.3px] text-dim uppercase hover:text-text transition-colors text-left"
       >
         <span>
           {open ? "▾" : "▸"} {title}
         </span>
-        {meta && <span className="text-muted normal-case tracking-normal">{meta}</span>}
+        {meta && <span className="normal-case tracking-normal text-right">{meta}</span>}
       </button>
-      {open && <div className="p-3 flex-1 overflow-auto">{children}</div>}
+      {open && <div className="px-3.5 pb-3.5 flex-1 overflow-auto">{children}</div>}
     </div>
   );
 }

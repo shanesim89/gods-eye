@@ -4,9 +4,7 @@ import { TickerSearch } from "./_components/TickerSearch";
 import { SpxHeatmap } from "./_components/SpxHeatmap";
 import { CryptoHeatmap } from "./_components/CryptoHeatmap";
 import { FearGreedBar } from "./_components/FearGreedBar";
-import { GlobalHologramMap } from "./_components/GlobalHologramMap";
 import { getSpxHeatmap, getCryptoHeatmap, getFearGreed } from "@/lib/market-overview";
-import { getGlobalIndexScores } from "@/lib/global-indices";
 
 export const revalidate = 600; // ISR: refresh data every 10min
 
@@ -42,28 +40,21 @@ const CLASSES = [
 ];
 
 export default async function GuruPage() {
-  const [spxRes, cryptoRes, fgRes, globalRes] = await Promise.allSettled([
+  const [spxRes, cryptoRes, fgRes] = await Promise.allSettled([
     getSpxHeatmap(),
     getCryptoHeatmap(),
     getFearGreed(),
-    getGlobalIndexScores(),
   ]);
 
   const spx    = spxRes.status    === "fulfilled" ? spxRes.value    : [];
   const crypto = cryptoRes.status === "fulfilled" ? cryptoRes.value : [];
   const fg     = fgRes.status     === "fulfilled" ? fgRes.value     : { crypto: null, stocks: null };
-  const global = globalRes.status === "fulfilled" ? globalRes.value : [];
 
   return (
     <Panel
       title="INVESTMENT GURU"
       meta="MARKET RESEARCH · MULTI-AGENT COUNCIL"
     >
-      {/* ── Global hologram map ── */}
-      <div className="mt-2">
-        <GlobalHologramMap data={global} />
-      </div>
-
       {/* ── Ticker search ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
         {CLASSES.map((c) => (

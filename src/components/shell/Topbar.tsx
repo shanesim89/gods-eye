@@ -5,22 +5,13 @@ import { useEffect, useState } from "react";
 import { UserButton, useAuth } from "@clerk/nextjs";
 
 const NAV = [
-  { href: "/", label: "🏠 HOME", match: (p: string) => p === "/" },
-  { href: "/money-map/assets", label: "MONEY MAP", match: (p: string) => p.startsWith("/money-map") && p !== "/money-map" },
-  { href: "/guru", label: "GURU", match: (p: string) => p.startsWith("/guru") },
-  { href: "/ai-portfolio", label: "AI PORTFOLIO", match: (p: string) => p.startsWith("/ai-portfolio") },
-  { href: "/scanner", label: "SCANNER", match: (p: string) => p.startsWith("/scanner") },
-  { href: "/market-outlook", label: "OUTLOOK", match: (p: string) => p.startsWith("/market-outlook") },
-  { href: "/goals", label: "GOALS", match: (p: string) => p.startsWith("/goals") },
-  { href: "/settings", label: "SETTINGS", match: (p: string) => p.startsWith("/settings") },
-];
-
-const MONEY_SUBS = [
-  { href: "/money-map/assets", label: "ASSETS" },
-  { href: "/money-map/liabilities", label: "LIABS" },
-  { href: "/money-map/income", label: "INCOME" },
-  { href: "/money-map/subscriptions", label: "SUBS" },
-  { href: "/money-map/cashflow", label: "FIXED/DCA" },
+  { href: "/", label: "Home", match: (p: string) => p === "/" },
+  { href: "/ai-portfolio", label: "AI Portfolio", match: (p: string) => p.startsWith("/ai-portfolio") },
+  { href: "/market-news", label: "News", match: (p: string) => p.startsWith("/market-news") },
+  { href: "/indicators", label: "Indicators", match: (p: string) => p.startsWith("/indicators") },
+  { href: "/guru", label: "Guru", match: (p: string) => p.startsWith("/guru") },
+  { href: "/carousel", label: "Carousel", match: (p: string) => p.startsWith("/carousel") },
+  { href: "/settings", label: "Settings", match: (p: string) => p.startsWith("/settings") },
 ];
 
 function useClock() {
@@ -50,27 +41,28 @@ export function Topbar() {
   const pathname = usePathname() ?? "";
   const now = useClock();
   const { isSignedIn, isLoaded } = useAuth();
-  const inMoney = pathname.startsWith("/money-map") && pathname !== "/money-map";
 
   return (
     <>
-      <div className="bg-black amber-border-b px-3 py-1.5 flex flex-wrap justify-between items-center gap-y-1 text-[11px]">
+      <div className="bg-bg amber-border-b px-3.5 py-2.5 flex flex-wrap justify-between items-center gap-y-2 text-[11px]">
         <Link
           href="/"
-          className="text-cyan font-bold tracking-[2px] shrink-0 hover:opacity-80 hud-text-glow"
+          className="shrink-0 font-semibold text-[13px] tracking-[-0.01em] hover:opacity-80"
           title="Home"
         >
-          ◉ GOD&apos;S EYE / TERMINAL
+          <span className="text-cyan">◆</span> God&apos;s Eye
         </Link>
-        <div className="flex order-3 sm:order-2 w-full sm:w-auto overflow-x-auto">
+        <div className="flex order-3 sm:order-2 w-full sm:w-auto overflow-x-auto bg-panel rounded-[10px] p-[3px] gap-[3px]">
           {NAV.map((n) => {
             const active = n.match(pathname);
             return (
               <Link
                 key={n.label}
                 href={n.href}
-                className={`mx-2.5 shrink-0 ${
-                  active ? "text-cyan" : "text-muted hover:text-text"
+                className={`shrink-0 px-2.5 py-1 rounded-[7px] transition-colors ${
+                  active
+                    ? "bg-cyan text-bg font-semibold"
+                    : "text-dim hover:text-text"
                 }`}
               >
                 {n.label}
@@ -78,8 +70,8 @@ export function Topbar() {
             );
           })}
         </div>
-        <div className="text-muted shrink-0 order-2 sm:order-3 text-[10px] sm:text-[11px] flex items-center gap-3">
-          <span>BASE: USD · {now || "—"}</span>
+        <div className="text-dim shrink-0 order-2 sm:order-3 text-[10px] sm:text-[11px] flex items-center gap-3">
+          <span className="font-mono">USD · {now || "—"}</span>
           {isLoaded && isSignedIn ? (
             <UserButton />
           ) : isLoaded ? (
@@ -89,27 +81,6 @@ export function Topbar() {
           ) : null}
         </div>
       </div>
-      {inMoney && (
-        <div className="bg-black border-b border-border px-3 py-1 flex gap-4 text-[10px] overflow-x-auto whitespace-nowrap">
-          <Link href="/money-map" className="text-cyan shrink-0 hover:text-amber">
-            ← HOME
-          </Link>
-          {MONEY_SUBS.map((s) => {
-            const active = pathname === s.href;
-            return (
-              <Link
-                key={s.href}
-                href={s.href}
-                className={`shrink-0 ${
-                  active ? "text-amber" : "text-muted hover:text-text"
-                }`}
-              >
-                {s.label}
-              </Link>
-            );
-          })}
-        </div>
-      )}
     </>
   );
 }

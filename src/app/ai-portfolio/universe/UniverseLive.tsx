@@ -160,7 +160,7 @@ export function UniverseLive({ initial }: { initial: UniverseDashboardData }) {
             <span className="text-muted">CAPACITY</span>
             <span className="text-amber tabular-nums">{state.openCount} / {state.maxPositions}</span>
           </div>
-          <div className="h-1.5 bg-black border border-border">
+          <div className="h-1.5 bg-grid border border-border rounded-full overflow-hidden">
             <div className={`h-full ${capacityPct >= 100 ? "bg-red" : "bg-amber"}`} style={{ width: `${capacityPct}%` }} />
           </div>
         </div>

@@ -1,11 +1,12 @@
 {
   "version": "0.0.1",
+  "autoPort": true,
   "configurations": [
     {
-      "name": "gods-eye-dev",
+      "name": "gods-eye",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--", "--port", "3737"],
-      "port": 3737
+      "runtimeArgs": ["run", "dev"],
+      "port": 3021
     }
   ]
 }

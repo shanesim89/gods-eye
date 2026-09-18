@@ -1,6 +1,6 @@
 export function FooterStatus() {
   return (
-    <div className="bg-black border-t border-border px-3 py-1 text-[10px] text-muted flex justify-between">
+    <div className="bg-bg border-t border-border px-3.5 py-1.5 text-[10px] text-dim flex justify-between">
       <div>
         STATUS: <span className="text-green">● CONNECTED</span> &nbsp; · &nbsp;
         FX FEED: <span className="text-green">LIVE</span> &nbsp; · &nbsp; MKT FEED: <span className="text-green">LIVE</span>

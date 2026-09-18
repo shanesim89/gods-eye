@@ -126,6 +126,15 @@ export async function getCandles(symbol: string, days = 90): Promise<StockCandle
   return getYahooCandles(symbol, days);
 }
 
+/** Market-wide wire. Finnhub categories: general | forex | crypto | merger. */
+export async function getMarketNews(
+  category: "general" | "forex" | "crypto" | "merger" = "general",
+): Promise<NewsItem[] | null> {
+  return cached(`fh-news-mkt:${category}`, TTL_30MIN, () =>
+    get<NewsItem[]>(`/news?category=${category}`)
+  );
+}
+
 export async function getCompanyNews(symbol: string): Promise<NewsItem[] | null> {
   const to = new Date().toISOString().slice(0, 10);
   const from = new Date(Date.now() - 7 * 86400 * 1000).toISOString().slice(0, 10);

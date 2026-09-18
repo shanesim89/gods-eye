@@ -1,18 +1,21 @@
 @import "tailwindcss";
 
+/* Bento Slate — cool slate ground, rounded tiles, one teal accent.
+   Token NAMES are unchanged on purpose: ~250 files reference bg-panel,
+   text-cyan, border-border etc. Only the values move. */
 :root {
-  --bg: #0a0e14;
-  --panel: #101b29;
-  --border: #2f4a5e;
-  --grid: #16222f;
-  --amber: #ffc94d;
-  --green: #4dffb0;
-  --red: #ff7575;
-  --cyan: #3df0ff;
-  --purple: #c89bff;
-  --text: #eef9ff;
-  --muted: #c4e2f0;
-  --dim: #a8cadd;
+  --bg: #0e1216;
+  --panel: #171d24;
+  --border: #242e37;
+  --grid: #131a21;
+  --amber: #fbbf24;
+  --green: #34d399;
+  --red: #fb7185;
+  --cyan: #2dd4bf;   /* primary accent — teal, not cyan */
+  --purple: #a78bfa;
+  --text: #e7eef5;
+  --muted: #b3c2cf;
+  --dim: #8496a6;
 }
 
 @theme inline {
@@ -28,6 +31,7 @@
   --color-text: var(--text);
   --color-muted: var(--muted);
   --color-dim: var(--dim);
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-jetbrains-mono), 'Consolas', 'Courier New', monospace;
 }
 
@@ -36,19 +40,22 @@ html, body { height: 100%; }
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: var(--font-jetbrains-mono), 'Consolas', 'Courier New', monospace;
+  font-family: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.45;
   font-variant-numeric: tabular-nums;
 }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 0; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--dim); }
 
-.dotted-row { border-bottom: 1px dotted var(--dim); }
-.amber-border-b { border-bottom: 1px solid var(--cyan); box-shadow: 0 1px 6px rgba(61,240,255,0.25); }
+/* Legacy utility names kept so no call site has to change — the terminal
+   glow they used to apply has no place in Bento Slate, so they now carry
+   the tile's soft elevation instead of a neon halo. */
+.dotted-row { border-bottom: 1px solid var(--border); }
+.amber-border-b { border-bottom: 1px solid var(--border); }
 
-.hud-glow { box-shadow: 0 0 0 1px rgba(61,240,255,0.15), 0 0 12px rgba(61,240,255,0.08); }
-.hud-text-glow { text-shadow: 0 0 8px rgba(61,240,255,0.45); }
+.hud-glow { box-shadow: 0 1px 2px rgba(0,0,0,0.35); }
+.hud-text-glow { text-shadow: none; }

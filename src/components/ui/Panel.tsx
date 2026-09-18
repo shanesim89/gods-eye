@@ -13,13 +13,13 @@ export function Panel({
 }) {
   return (
     <div
-      className={`bg-panel border border-border flex flex-col overflow-hidden hud-glow ${className}`}
+      className={`bg-panel border border-border rounded-xl flex flex-col overflow-hidden hud-glow ${className}`}
     >
-      <div className="bg-black border-b border-border px-2.5 py-1.5 flex justify-between items-center text-[10px] tracking-[1.5px] text-cyan uppercase">
-        <span className="hud-text-glow">◢ {title}</span>
-        {meta && <span className="text-muted normal-case tracking-normal">{meta}</span>}
+      <div className="px-3.5 pt-3 pb-2 flex justify-between items-baseline gap-3 text-[10px] tracking-[1.3px] text-dim uppercase">
+        <span>{title}</span>
+        {meta && <span className="normal-case tracking-normal text-right">{meta}</span>}
       </div>
-      <div className="p-3 flex-1 overflow-auto">{children}</div>
+      <div className="px-3.5 pb-3.5 flex-1 overflow-auto">{children}</div>
     </div>
   );
 }

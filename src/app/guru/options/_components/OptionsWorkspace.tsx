@@ -44,7 +44,7 @@ export function OptionsWorkspace({ initial }: { initial: OptionsAnalysis }) {
   }
 
   const selectCls =
-    "bg-black border border-border text-text text-[11px] px-2 py-1 outline-none focus:border-amber font-mono";
+    "bg-grid border border-border rounded-lg text-text text-[11px] px-2.5 py-1.5 outline-none focus:border-cyan font-mono";
 
   return (
     <div className={pending ? "opacity-60 transition-opacity" : "transition-opacity"}>

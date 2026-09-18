@@ -54,10 +54,10 @@ export function TickerStrip() {
   }, []);
 
   return (
-    <div className="bg-black border-b border-border px-3 py-1 flex gap-7 text-[11px] overflow-x-auto whitespace-nowrap">
+    <div className="bg-bg border-b border-border px-3.5 py-1.5 flex gap-7 text-[11px] overflow-x-auto whitespace-nowrap font-mono">
       {quotes.map((t) => (
         <div key={t.sym} className="inline-flex gap-1.5 shrink-0">
-          <span className="text-text">{t.sym}</span>
+          <span className="text-dim">{t.sym}</span>
           <span
             className={
               t.dir === "up"
