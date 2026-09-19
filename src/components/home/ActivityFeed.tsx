@@ -36,7 +36,7 @@ function hhmm(iso: string): string {
     : "--:--";
 }
 
-/** Unified chronological 48h feed across all bots, client-side filterable. */
+/** Unified chronological 24h feed across all bots, client-side filterable. */
 export function ActivityFeed({ rows }: { rows: HomeActivityRow[] }) {
   const [filter, setFilter] = useState<Filter>("all");
   const visible = rows.filter((r) => matches(r, filter));
@@ -44,7 +44,7 @@ export function ActivityFeed({ rows }: { rows: HomeActivityRow[] }) {
   return (
     <div className="mt-4">
       <div className="flex items-center gap-3 border-b border-border pb-1 mb-2">
-        <span className="text-cyan text-[11px] uppercase tracking-[2px]">▤ Activity — last 48h</span>
+        <span className="text-cyan text-[11px] uppercase tracking-[2px]">▤ Activity — last 24h</span>
         <div className="flex gap-1 ml-auto">
           {FILTERS.map((f) => (
             <button
@@ -60,7 +60,7 @@ export function ActivityFeed({ rows }: { rows: HomeActivityRow[] }) {
         </div>
       </div>
       {visible.length === 0 ? (
-        <div className="text-dim text-[11px] py-2">Nothing matching in the last 48h.</div>
+        <div className="text-dim text-[11px] py-2">Nothing matching in the last 24h.</div>
       ) : (
         <div className="space-y-0.5">
           {visible.map((r, i) => (

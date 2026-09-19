@@ -603,7 +603,7 @@ export async function buildHomeState(userId: string): Promise<HomeState> {
 
   const totalBook = fleetBookValue(visible);
 
-  const cutoff = Date.now() - 2 * DAY_MS;
+  const cutoff = Date.now() - DAY_MS;
   const activity: HomeActivityRow[] = visible
     .flatMap((b) => b.recent.map((r) => ({ ...r, bot: b.key, botLabel: b.label })))
     .filter((r) => {
