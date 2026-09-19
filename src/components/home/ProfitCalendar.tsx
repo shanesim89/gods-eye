@@ -19,7 +19,7 @@ function fg(v: number): string {
 
 // Short 3-char tickers for the cramped per-bot lines inside each day box.
 const ABBR: Record<string, string> = {
-  gold: "GLD", pdhl: "PDH", quant: "QNT", options: "OPT", crypto: "CRY",
+  quant: "QNT", options: "OPT", crypto: "CRY", vulcan: "VLC", universe: "UNI",
 };
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
