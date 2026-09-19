@@ -7,6 +7,8 @@ import { market_data_cache } from "@/db/schema";
 import { ACTIVE_STRATEGIES, isRetiredInfraService } from "@/lib/ai-portfolio/registry";
 import { buildHomeState } from "@/lib/ai-portfolio/overview";
 import { FleetOverview } from "@/components/home/FleetOverview";
+import { getBrainStates } from "@/lib/ai-portfolio/brain";
+import { BrainPanel } from "@/components/ai-portfolio/BrainPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -43,9 +45,10 @@ const badgeClass = {
 
 export default async function AiPortfolioPage() {
   const user = await requireUser();
-  const [{ status: infra, ageMin }, homeState] = await Promise.all([
+  const [{ status: infra, ageMin }, homeState, brainStates] = await Promise.all([
     getInfraStatus(),
     buildHomeState(user.id),
+    getBrainStates(),
   ]);
   const infraUp = infra != null && ageMin != null && ageMin < 10;
   const services = infra ? Object.entries(infra.services) : [];
@@ -122,6 +125,8 @@ export default async function AiPortfolioPage() {
       <div className="mt-4">
         <FleetOverview initial={homeState} />
       </div>
+
+      <BrainPanel states={brainStates} />
     </Panel>
   );
 }
