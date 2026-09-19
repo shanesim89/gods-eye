@@ -30,7 +30,9 @@ export async function getBrainStates(): Promise<Partial<Record<BotKey, BrainStat
   const out: Partial<Record<BotKey, BrainState>> = {};
   for (const row of rows) {
     const key = row.ticker.replace("brain:", "") as BotKey;
-    out[key] = row.payload as BrainState;
+    const payload = row.payload as Partial<BrainState> | null;
+    if (!payload || typeof payload.bot !== "string" || !Array.isArray(payload.recent_amendments)) continue;
+    out[key] = payload as BrainState;
   }
   return out;
 }

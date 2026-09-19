@@ -7,8 +7,9 @@ const STATUS_COLOR: Record<string, string> = {
   PENDING: "text-amber",
 };
 
-function ageDays(iso: string): number {
-  return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+function ageDays(iso: string): number | null {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  return Number.isNaN(days) ? null : days;
 }
 
 export function BrainPanel({ states }: { states: Partial<Record<string, BrainState>> }) {
@@ -31,9 +32,15 @@ export function BrainPanel({ states }: { states: Partial<Record<string, BrainSta
               ) : (
                 <>
                   <div className="text-muted text-[11px] mb-1">
-                    Last review {state.last_review.date} ({ageDays(state.last_review.date)}d ago) ·{" "}
+                    Last review {state.last_review.date}
+                    {ageDays(state.last_review.date) !== null && ` (${ageDays(state.last_review.date)}d ago)`} ·{" "}
                     {state.last_review.amendments_proposed} proposed
                   </div>
+                  {state.last_review.review_md && (
+                    <div className="text-dim text-[10px] leading-relaxed whitespace-pre-wrap mb-2 border-l-2 border-border pl-2">
+                      {state.last_review.review_md}
+                    </div>
+                  )}
                   {state.recent_amendments.length === 0 ? (
                     <div className="text-dim text-[11px]">No amendments yet.</div>
                   ) : (

@@ -45,11 +45,18 @@ const badgeClass = {
 
 export default async function AiPortfolioPage() {
   const user = await requireUser();
-  const [{ status: infra, ageMin }, homeState, brainStates] = await Promise.all([
+  const [infraResult, homeResult, brainResult] = await Promise.allSettled([
     getInfraStatus(),
     buildHomeState(user.id),
     getBrainStates(),
   ]);
+  for (const [name, r] of [["infra", infraResult], ["home", homeResult], ["brain", brainResult]] as const) {
+    if (r.status === "rejected") console.error(`[ai-portfolio] ${name} fetch failed:`, r.reason);
+  }
+  const { status: infra, ageMin } =
+    infraResult.status === "fulfilled" ? infraResult.value : { status: null, ageMin: null };
+  const homeState = homeResult.status === "fulfilled" ? homeResult.value : null;
+  const brainStates = brainResult.status === "fulfilled" ? brainResult.value : {};
   const infraUp = infra != null && ageMin != null && ageMin < 10;
   const services = infra ? Object.entries(infra.services) : [];
   const activeServices = services.filter(([name]) => !isRetiredInfraService(name));
@@ -123,7 +130,13 @@ export default async function AiPortfolioPage() {
       </div>
 
       <div className="mt-4">
-        <FleetOverview initial={homeState} />
+        {homeState ? (
+          <FleetOverview initial={homeState} />
+        ) : (
+          <div className="border border-red/60 bg-red/5 px-3 py-2 text-[11px] text-muted">
+            Fleet overview failed to load.
+          </div>
+        )}
       </div>
 
       <BrainPanel states={brainStates} />

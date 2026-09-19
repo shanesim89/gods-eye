@@ -24,7 +24,7 @@ export function FleetOverview({ initial }: { initial: HomeState }) {
       </div>
 
       {state.alerts.length > 1 && (
-        <div className="border border-red/60 bg-red/5 px-3 py-2 mb-3 text-[11px] leading-relaxed">
+        <div className="sticky top-0 z-10 border border-red/60 bg-bg px-3 py-2 mb-3 text-[11px] leading-relaxed">
           <span className="text-red font-bold uppercase tracking-[1px] mr-2">⚠ Attention</span>
           <span className="text-muted">{state.alerts.join("  ·  ")}</span>
         </div>

@@ -30,7 +30,7 @@ export function PaperFleetColumn({ bots }: { bots: BotStatus[] }) {
                 {bot.pnlPct != null && bot.pnlPct !== 0 ? ` ${pct(bot.pnlPct, 2)}` : ""}
               </span>
             </span>
-            <span className="text-dim text-[10px] tabular-nums w-8 text-right">{rel(bot.lastActivity)}</span>
+            <span className="text-dim text-[10px] tabular-nums w-8 text-right" suppressHydrationWarning>{rel(bot.lastActivity)}</span>
           </Link>
         ))}
       </div>

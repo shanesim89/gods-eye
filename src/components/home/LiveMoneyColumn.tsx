@@ -11,10 +11,10 @@ export function LiveMoneyColumn({ bots }: { bots: BotStatus[] }) {
       <div className="text-green text-[11px] uppercase tracking-[2px] mb-2">
         ■ Live money — {usd(bots.reduce((s, b) => s + b.equityOrValue, 0))}
       </div>
-      {bots.map((bot) => (
-        <div key={bot.key} className="mb-2">
-          <Link href={bot.href} className="block border border-green/50 bg-grid p-3 hover:border-green transition-colors">
-            <div className="flex items-baseline justify-between">
+      <div className="border border-green/50 bg-grid">
+        {bots.map((bot) => (
+          <div key={bot.key} className="dotted-row px-3 py-2">
+            <Link href={bot.href} className="flex items-baseline justify-between hover:text-green transition-colors">
               <span className="text-[13px] font-bold tracking-[1px]">{bot.label}</span>
               <span className="tabular-nums text-[13px]">
                 {usd(bot.equityOrValue, 2)}{" "}
@@ -22,10 +22,10 @@ export function LiveMoneyColumn({ bots }: { bots: BotStatus[] }) {
                   {signedUsd(bot.pnl, 2)} {bot.pnlPct != null ? `(${pct(bot.pnlPct)})` : ""}
                 </span>
               </span>
-            </div>
-            <div className="mt-2 space-y-1">
+            </Link>
+            <div className="mt-1 space-y-0.5">
               {bot.holdings.map((h) => (
-                <div key={h.label} className="flex justify-between text-[11px] dotted-row py-0.5">
+                <div key={h.label} className="flex justify-between text-[11px] py-0.5">
                   <span className="text-muted">{h.label} <span className="text-dim">{h.detail}</span></span>
                   <span className="tabular-nums">
                     {h.value != null ? usd(h.value, 2) : ""}
@@ -36,17 +36,17 @@ export function LiveMoneyColumn({ bots }: { bots: BotStatus[] }) {
                 </div>
               ))}
             </div>
-            <div className="text-dim text-[10px] mt-2">
+            <div className="text-dim text-[10px] mt-1" suppressHydrationWarning>
               last activity {rel(bot.lastActivity)} ago{bot.healthNote ? ` · ${bot.healthNote}` : ""}
             </div>
-          </Link>
-          {bot.alert && (
-            <div className="border border-red/70 bg-red/5 text-red px-3 py-2 mt-2 text-[11px] leading-relaxed">
-              ⚠ {bot.alert}
-            </div>
-          )}
-        </div>
-      ))}
+            {bot.alert && (
+              <div className="border border-red/70 bg-red/5 text-red px-3 py-2 mt-2 text-[11px] leading-relaxed">
+                ⚠ {bot.alert}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
