@@ -18,8 +18,9 @@ const BOT_COLOR: Record<string, string> = {
   crypto: "text-green",
   options: "text-amber",
   quant: "text-amber",
-  gold: "text-cyan",
-  pdhl: "text-cyan",
+  vulcan: "text-cyan",
+  universe: "text-cyan",
+  leveraged: "text-cyan",
 };
 
 function matches(row: HomeActivityRow, f: Filter): boolean {
