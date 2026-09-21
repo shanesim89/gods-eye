@@ -915,127 +915,117 @@ export default function CarouselGenerator() {
       <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
       <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
       <style dangerouslySetInnerHTML={{__html: `
-        :root{
-          --bg: #F7F3EC;
-          --panel: #FFFFFF;
-          --ink: #2B2B2B;
-          --ink-soft: #6b6560;
-          --line: rgba(43,43,43,0.14);
-          --line-strong: rgba(43,43,43,0.28);
-          --radius: 10px;
+        /* Chrome only — the carousel canvas render below keeps its own Fraunces/Inter
+           editorial look, that's exported artwork, not app UI. This is Bento Slate. */
+        .carousel-tool{
+          --line: var(--border);
+          --line-strong: var(--border);
+          --ink-soft: var(--dim);
         }
-        *{ box-sizing: border-box; }
-        html,body{ margin:0; padding:0; }
-        body{
-          background: var(--bg);
-          color: var(--ink);
-          font-family: Inter, -apple-system, sans-serif;
+        .carousel-tool *{ box-sizing: border-box; }
+        .carousel-tool{
+          color: var(--text);
+          font-family: var(--font-plex-sans), ui-sans-serif, sans-serif;
           line-height: 1.5;
-          padding: 32px 20px 100px;
+          max-width: 980px; margin: 0 auto;
         }
-        .wrap{ max-width: 980px; margin: 0 auto; }
 
-        header.app-head{ margin-bottom: 40px; }
-        header.app-head .eyebrow{
-          font-family: Inter; font-size: 13px; letter-spacing: 0.02em;
-          color: var(--ink-soft); margin-bottom: 6px;
+        .carousel-tool header.app-head{ margin-bottom: 32px; }
+        .carousel-tool header.app-head .eyebrow{
+          font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+          color: var(--cyan); margin-bottom: 6px;
         }
-        header.app-head h1{
-          font-family: Fraunces, serif; font-weight: 600; font-size: clamp(28px, 4vw, 40px);
-          margin: 0 0 8px; letter-spacing: -0.01em;
+        .carousel-tool header.app-head h1{
+          font-weight: 600; font-size: clamp(24px, 3.4vw, 32px);
+          margin: 0 0 8px; letter-spacing: -0.01em; color: var(--text);
         }
-        header.app-head p{ margin:0; color: var(--ink-soft); font-size: 15px; max-width: 560px; }
+        .carousel-tool header.app-head p{ margin:0; color: var(--muted); font-size: 13px; max-width: 560px; }
 
-        .step{
-          display:grid; grid-template-columns: 44px 1fr; gap: 18px;
-          padding: 28px 0; border-top: 1px solid var(--line);
+        .carousel-tool .step{
+          display:grid; grid-template-columns: 32px 1fr; gap: 18px;
+          padding: 24px; margin-bottom: 16px;
+          background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
         }
-        .step:first-of-type{ border-top: none; }
-        .step-num{
-          font-family: Fraunces, serif; font-size: 26px; color: var(--ink-soft);
-          line-height: 1;
-        }
-        .step-body h2{
-          font-family: Fraunces, serif; font-weight: 600; font-size: 20px; margin: 0 0 4px;
-        }
-        .step-body > p.hint{ margin: 0 0 16px; color: var(--ink-soft); font-size: 14px; }
+        .carousel-tool .step-num{ font-size: 18px; color: var(--dim); line-height: 1; font-weight: 600; }
+        .carousel-tool .step-body h2{ font-weight: 600; font-size: 15px; margin: 0 0 4px; color: var(--text); }
+        .carousel-tool .step-body > p.hint{ margin: 0 0 16px; color: var(--muted); font-size: 12.5px; }
 
-        textarea{
-          width:100%; font-family: Inter; font-size:15px; color: var(--ink);
-          background: var(--panel); border: 1px solid var(--line-strong);
-          border-radius: var(--radius); padding: 14px 16px; resize: vertical;
+        .carousel-tool textarea{
+          width:100%; font-family: inherit; font-size:13px; color: var(--text);
+          background: var(--grid); border: 1px solid var(--border);
+          border-radius: 8px; padding: 12px 14px; resize: vertical;
           min-height: 110px;
         }
-        textarea:focus{ outline: none; border-color: var(--ink); }
+        .carousel-tool textarea:focus{ outline: none; border-color: var(--cyan); }
 
-        button{
-          font-family: Inter; font-size: 14px; font-weight: 500; cursor: pointer;
-          border-radius: 8px; padding: 11px 20px; border: 1px solid var(--ink);
-          background: var(--ink); color: var(--bg); transition: opacity .15s;
+        .carousel-tool button{
+          font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+          border-radius: 8px; padding: 9px 18px; border: 1px solid var(--cyan);
+          background: var(--cyan); color: var(--bg); transition: opacity .15s;
         }
-        button:hover{ opacity: 0.85; }
-        button.secondary{ background: transparent; color: var(--ink); }
-        button.ghost{ background: transparent; color: var(--ink-soft); border-color: var(--line-strong); }
-        button:disabled{ opacity: 0.4; cursor: not-allowed; }
-        button.small{ padding: 7px 12px; font-size: 13px; }
+        .carousel-tool button:hover{ opacity: 0.85; }
+        .carousel-tool button.secondary{ background: transparent; color: var(--text); border-color: var(--border); }
+        .carousel-tool button.ghost{ background: transparent; color: var(--muted); border-color: var(--border); }
+        .carousel-tool button:disabled{ opacity: 0.4; cursor: not-allowed; }
+        .carousel-tool button.small{ padding: 6px 11px; font-size: 12px; }
 
-        .row{ display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
-        .status{ font-size: 13px; color: var(--ink-soft); }
-        .status.active{ color: var(--ink); }
+        .carousel-tool .row{ display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
+        .carousel-tool .status{ font-size: 12px; color: var(--muted); }
+        .carousel-tool .status.active{ color: var(--cyan); }
 
-        .slide-card{
-          background: var(--panel); border: 1px solid var(--line);
-          border-radius: var(--radius); padding: 16px; margin-bottom: 12px;
+        .carousel-tool .slide-card{
+          background: var(--grid); border: 1px solid var(--border);
+          border-radius: 8px; padding: 14px; margin-bottom: 12px;
         }
-        .slide-card .top-row{
+        .carousel-tool .slide-card .top-row{
           display:flex; justify-content: space-between; align-items:center; margin-bottom: 10px;
         }
-        .slide-tag{
-          font-family: Inter; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
-          color: var(--ink-soft); background: var(--bg); border:1px solid var(--line);
+        .carousel-tool .slide-tag{
+          font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+          color: var(--dim); background: var(--panel); border:1px solid var(--border);
           padding: 3px 9px; border-radius: 20px;
         }
-        .slide-card textarea{ min-height: 70px; font-size: 14.5px; }
-        .slide-controls{
+        .carousel-tool .slide-card textarea{ min-height: 70px; font-size: 13px; }
+        .carousel-tool .slide-controls{
           display:flex; gap: 16px; align-items:center; margin-top: 10px; flex-wrap: wrap;
         }
-        .ctrl-group{ display:flex; align-items:center; gap: 6px; font-size: 13px; color: var(--ink-soft); }
-        select{
-          font-family: Inter; font-size: 13px; padding: 5px 8px; border-radius: 6px;
-          border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink);
+        .carousel-tool .ctrl-group{ display:flex; align-items:center; gap: 6px; font-size: 12px; color: var(--muted); }
+        .carousel-tool select{
+          font-family: inherit; font-size: 12px; padding: 5px 8px; border-radius: 6px;
+          border: 1px solid var(--border); background: var(--grid); color: var(--text);
         }
-        .icon-preview{ width:20px; height:20px; }
-        input[type=file]{ font-size: 12px; max-width: 160px; }
-        .img-thumb{ display:flex; align-items:center; gap:8px; }
-        .img-thumb img{ width: 40px; height: 40px; object-fit: cover; border-radius: 4px; border:1px solid var(--line); }
+        .carousel-tool .icon-preview{ width:20px; height:20px; }
+        .carousel-tool input[type=file]{ font-size: 12px; max-width: 160px; color: var(--muted); }
+        .carousel-tool .img-thumb{ display:flex; align-items:center; gap:8px; }
+        .carousel-tool .img-thumb img{ width: 40px; height: 40px; object-fit: cover; border-radius: 4px; border:1px solid var(--border); }
 
-        .content-slide-list .add-remove{ display:flex; gap:8px; margin: 6px 0 18px; }
+        .carousel-tool .content-slide-list .add-remove{ display:flex; gap:8px; margin: 6px 0 18px; }
 
-        .preview-area{ margin-top: 10px; }
-        .grid-preview{
+        .carousel-tool .preview-area{ margin-top: 10px; }
+        .carousel-tool .grid-preview{
           display:grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
           gap: 10px; margin-bottom: 24px;
         }
-        .grid-preview .thumb{
-          cursor:pointer; border-radius: 6px; overflow:hidden; border: 1px solid var(--line);
-          position: relative; aspect-ratio: 4/5; background: var(--panel);
+        .carousel-tool .grid-preview .thumb{
+          cursor:pointer; border-radius: 6px; overflow:hidden; border: 1px solid var(--border);
+          position: relative; aspect-ratio: 4/5; background: var(--grid);
         }
-        .grid-preview .thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
-        .grid-preview .thumb.active{ outline: 2px solid var(--ink); }
+        .carousel-tool .grid-preview .thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+        .carousel-tool .grid-preview .thumb.active{ outline: 2px solid var(--cyan); }
 
-        .single-viewer{ display:flex; flex-direction:column; align-items:center; gap: 14px; }
-        .single-viewer .canvas-holder{
+        .carousel-tool .single-viewer{ display:flex; flex-direction:column; align-items:center; gap: 14px; }
+        .carousel-tool .single-viewer .canvas-holder{
           max-width: 380px; width:100%; border-radius: 10px; overflow:hidden;
-          box-shadow: 0 8px 30px rgba(0,0,0,0.08); border: 1px solid var(--line);
+          box-shadow: 0 1px 2px rgba(0,0,0,0.35); border: 1px solid var(--border);
         }
-        .single-viewer .canvas-holder img{ width:100%; display:block; }
-        .nav-row{ display:flex; align-items:center; gap: 16px; }
-        .nav-row .pos{ font-size: 13px; color: var(--ink-soft); min-width: 50px; text-align:center; }
+        .carousel-tool .single-viewer .canvas-holder img{ width:100%; display:block; }
+        .carousel-tool .nav-row{ display:flex; align-items:center; gap: 16px; }
+        .carousel-tool .nav-row .pos{ font-size: 12px; color: var(--muted); min-width: 50px; text-align:center; }
 
-        footer.foot{ margin-top: 60px; color: var(--ink-soft); font-size: 12.5px; text-align:center; }
+        .carousel-tool footer.foot{ margin-top: 48px; color: var(--dim); font-size: 11.5px; text-align:center; }
       `}} />
 
-      <div className="wrap">
+      <div className="carousel-tool wrap">
 
         <header className="app-head">
           <div className="eyebrow">SHANE boss — internal tool</div>
@@ -1116,11 +1106,11 @@ export default function CarouselGenerator() {
         <footer className="foot">Built for SHANE boss · every carousel generated fresh</footer>
       </div>
 
-      <div id="cropModal" style={{display:'none', position:'fixed', inset:0, background:'rgba(43,43,43,0.6)', zIndex:1000, alignItems:'center', justifyContent:'center'}}>
-        <div style={{background:'var(--panel)', borderRadius:'12px', padding:'20px', maxWidth:'420px', width:'92%'}}>
-          <h3 style={{fontFamily:"'Fraunces'", fontSize:'18px', margin:'0 0 4px'}}>Crop image</h3>
-          <p style={{fontSize:'13px', color:'var(--ink-soft)', margin:'0 0 14px'}}>Drag to reposition, use the slider to zoom. Every slide image uses this same frame size.</p>
-          <div id="cropStage" style={{position:'relative', width:'100%', overflow:'hidden', borderRadius:'8px', border:'1px solid var(--line-strong)', touchAction:'none', cursor:'grab'}}>
+      <div id="cropModal" className="carousel-tool" style={{display:'none', position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', zIndex:1000, alignItems:'center', justifyContent:'center'}}>
+        <div style={{background:'var(--panel)', border:'1px solid var(--border)', borderRadius:'12px', padding:'20px', maxWidth:'420px', width:'92%'}}>
+          <h3 style={{fontSize:'15px', fontWeight:600, margin:'0 0 4px', color:'var(--text)'}}>Crop image</h3>
+          <p style={{fontSize:'12.5px', color:'var(--muted)', margin:'0 0 14px'}}>Drag to reposition, use the slider to zoom. Every slide image uses this same frame size.</p>
+          <div id="cropStage" style={{position:'relative', width:'100%', overflow:'hidden', borderRadius:'8px', border:'1px solid var(--border)', touchAction:'none', cursor:'grab'}}>
             <canvas id="cropCanvas"></canvas>
           </div>
           <input type="range" id="cropZoom" min="100" max="300" defaultValue="100" style={{width:'100%', margin:'14px 0'}} />
