@@ -2,6 +2,9 @@ import { Panel } from "@/components/ui/Panel";
 import { requireUser } from "@/lib/auth";
 import { getYahooData, type YahooData } from "@/lib/yahoo";
 import { getFearGreed } from "@/lib/market-overview";
+import { getMarketStressState } from "@/lib/market-stress";
+import { StressHeader } from "@/components/market-stress/StressHeader";
+import { StageCard } from "@/components/market-stress/StageCard";
 
 export const revalidate = 900;
 
@@ -121,14 +124,25 @@ export default async function IndicatorsPage() {
   await requireUser();
 
   const specs = GROUPS.flatMap((g) => g.specs);
-  const [quotes, fg] = await Promise.all([
+  const [quotes, fg, stress] = await Promise.all([
     Promise.all(specs.map((s) => getYahooData(s.symbol))),
     getFearGreed(),
+    getMarketStressState(),
   ]);
   const bySymbol = new Map(specs.map((s, i) => [s.symbol, quotes[i]]));
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+      <div className="lg:col-span-2">
+        <StressHeader state={stress} />
+      </div>
+
+      <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-2.5">
+        {stress.stages.map((s) => (
+          <StageCard key={s.id} stage={s} index={s.id} />
+        ))}
+      </div>
+
       <div className="lg:col-span-2">
         <Panel title="Sentiment" meta="fear & greed">
           <div className="flex flex-wrap gap-6 py-1">

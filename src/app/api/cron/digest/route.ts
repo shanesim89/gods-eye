@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
-import { ai_options_settings, ai_trading_settings } from "@/db/schema";
+import { ai_options_settings, ai_trading_settings, market_data_cache } from "@/db/schema";
+import { computeBreadth } from "@/lib/market-stress/breadth";
 import { runScan, writeScanCache, writeHistory } from "@/lib/crypto/scanner";
 import { manageOptionsPositionsForUser, runOptionsForUser } from "@/lib/options/engine";
 import { buildPortfolioDigest } from "@/lib/trading/portfolio-digest";
@@ -10,7 +11,10 @@ import { sendTelegram } from "@/lib/telegram";
 import { stampCronHeartbeat } from "@/lib/cron-heartbeat";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// Bumped from 60s: the breadth scan below does ~500 sequential-batched Yahoo
+// calls. Hobby plan allows up to 300s via Fluid Compute — verify this is
+// actually enabled on the project if the cron starts timing out.
+export const maxDuration = 300;
 
 // Merged daily cron (scanner + weekly options) so the project stays within the
 // Hobby 2-cron limit while keeping the real-money DCA cron on its own dedicated
@@ -141,6 +145,24 @@ export async function GET(req: Request) {
     }
   } else {
     out.portfolio_digest = { ran: false, reason: "not Wednesday (UTC)" };
+  }
+
+  // ── Market stress breadth scan (daily) ───────────────────────────────────
+  // Full S&P 500 constituent scan (~500 Yahoo calls) — too heavy for a
+  // page-request. Piggybacks on this cron rather than getting its own
+  // schedule entry (Hobby plan caps at 2 crons, already used by dca+digest).
+  try {
+    const snapshot = await computeBreadth();
+    await db
+      .insert(market_data_cache)
+      .values({ ticker: "mstress:breadth", payload: snapshot, fetched_at: new Date() })
+      .onConflictDoUpdate({
+        target: market_data_cache.ticker,
+        set: { payload: snapshot, fetched_at: new Date() },
+      });
+    out.breadth = { ok: true, scanned: snapshot.scanned };
+  } catch (err) {
+    out.breadth = { ok: false, error: err instanceof Error ? err.message : "unknown" };
   }
 
   // ── Watchdog heartbeat (always last) ─────────────────────────────────────
