@@ -2,7 +2,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { UserButton, useAuth } from "@clerk/nextjs";
 
 const NAV = [
   { href: "/", label: "Home", match: (p: string) => p === "/" },
@@ -37,10 +36,14 @@ function useClock() {
   return now;
 }
 
+async function logout() {
+  await fetch("/api/login", { method: "DELETE" });
+  window.location.href = "/login";
+}
+
 export function Topbar() {
   const pathname = usePathname() ?? "";
   const now = useClock();
-  const { isSignedIn, isLoaded } = useAuth();
 
   return (
     <>
@@ -72,13 +75,9 @@ export function Topbar() {
         </div>
         <div className="text-dim shrink-0 order-2 sm:order-3 text-[10px] sm:text-[11px] flex items-center gap-3">
           <span className="font-mono">USD · {now || "—"}</span>
-          {isLoaded && isSignedIn ? (
-            <UserButton />
-          ) : isLoaded ? (
-            <Link href="/sign-in" className="text-cyan">
-              SIGN IN
-            </Link>
-          ) : null}
+          <button onClick={logout} className="text-dim hover:text-text">
+            LOG OUT
+          </button>
         </div>
       </div>
     </>

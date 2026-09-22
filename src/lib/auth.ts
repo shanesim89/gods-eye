@@ -1,13 +1,13 @@
 import "server-only";
-import { auth, currentUser } from "@clerk/nextjs/server";
 import { db } from "@/db/client";
 import { users } from "@/db/schema";
-import { eq } from "drizzle-orm";
+
+// Clerk removed — single-user app gated by a 4-digit PIN in middleware.ts.
+// There's only ever one row in `users`; look it up directly rather than by
+// clerk_id so the existing row (and everything FK'd to it) stays intact.
 
 /**
- * Ensure a row in users exists for the current Clerk user.
- * Returns the internal users.id (uuid).
- * Throws if not signed in.
+ * Ensure the single users row exists. Returns the internal users.id (uuid).
  */
 export async function getOrCreateUser(): Promise<{
   id: string;
@@ -15,29 +15,14 @@ export async function getOrCreateUser(): Promise<{
   email: string | null;
   base_currency: string;
 }> {
-  const { userId } = await auth();
-  if (!userId) throw new Error("Not signed in");
-
-  // Look up existing
-  const existing = await db
-    .select()
-    .from(users)
-    .where(eq(users.clerk_id, userId))
-    .limit(1);
-
+  const existing = await db.select().from(users).limit(1);
   if (existing.length > 0) return existing[0];
-
-  // Create new — fetch email from Clerk
-  const cu = await currentUser();
-  const email =
-    cu?.emailAddresses?.find((e) => e.id === cu.primaryEmailAddressId)
-      ?.emailAddress ?? cu?.emailAddresses?.[0]?.emailAddress ?? null;
 
   const [row] = await db
     .insert(users)
     .values({
-      clerk_id: userId,
-      email,
+      clerk_id: "pin-user",
+      email: null,
       base_currency: "SGD",
     })
     .returning();
