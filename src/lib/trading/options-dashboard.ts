@@ -1,7 +1,7 @@
 import "server-only";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db/client";
-import { ai_options_positions, ai_options_wheel, ai_options_orders, council_verdict_cache } from "@/db/schema";
+import { ai_options_positions, ai_options_wheel, ai_options_orders, council_verdict_cache, daily_pnl } from "@/db/schema";
 import { getOrCreateOptionsSettings } from "@/lib/options/settings";
 import { getPrice, getPriceOHLC, type OhlcBar } from "@/lib/market";
 import type { Verdict } from "@/lib/council/types";
@@ -82,6 +82,7 @@ export type OptionsDashboardData = {
   maxCollateral: number;
   totalCollateral: number;
   totalPnl: number;
+  maxDrawdown: number; // peak-to-trough on cumulative realized daily_pnl (options bot)
   totalPremiumIncome: number;
   totalOpenCount: number;
   // ── Portfolio leverage ──
@@ -294,6 +295,18 @@ export async function getOptionsDashboardData(userId: string): Promise<OptionsDa
       })
   );
 
+  const dailyRows = await db
+    .select({ realized_pnl: daily_pnl.realized_pnl })
+    .from(daily_pnl)
+    .where(and(eq(daily_pnl.user_id, userId), eq(daily_pnl.bot, "options")))
+    .orderBy(daily_pnl.day);
+  let cum = 0, peak = 0, maxDrawdown = 0;
+  for (const r of dailyRows) {
+    cum += parseFloat(r.realized_pnl ?? "0");
+    peak = Math.max(peak, cum);
+    maxDrawdown = Math.max(maxDrawdown, peak - cum);
+  }
+
   const accountSize = parseFloat(settings.account_size_usd);
   const netDeltaDollars = rows.reduce((s, r) => s + r.deltaDollars, 0);
   const totalThetaPerDay = rows.reduce((s, r) => s + r.thetaPerDay, 0);
@@ -311,6 +324,7 @@ export async function getOptionsDashboardData(userId: string): Promise<OptionsDa
     maxCollateral,
     totalCollateral,
     totalPnl,
+    maxDrawdown,
     totalPremiumIncome,
     totalOpenCount,
     accountSize,

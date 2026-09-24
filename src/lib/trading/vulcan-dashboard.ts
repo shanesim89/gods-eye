@@ -75,14 +75,19 @@ export async function getVulcanDashboardData(userId: string): Promise<VulcanDash
       .from(vulcan_scores)
       .where(eq(vulcan_scores.run_date, latestRunDate))
       .orderBy(desc(vulcan_scores.composite_score));
-    candidates = rows.map((r) => ({
-      symbol: r.symbol,
-      sector: r.sector,
-      compositeScore: parseFloat(r.composite_score),
-      compositeRank: r.composite_rank,
-      stage2Eligible: r.stage2_eligible,
-      held: heldSymbols.has(r.symbol),
-    }));
+    const seen = new Set<string>();
+    for (const r of rows) {
+      if (seen.has(r.symbol)) continue; // vulcan_scores can have dupe rows for a run_date
+      seen.add(r.symbol);
+      candidates.push({
+        symbol: r.symbol,
+        sector: r.sector,
+        compositeScore: parseFloat(r.composite_score),
+        compositeRank: r.composite_rank,
+        stage2Eligible: r.stage2_eligible,
+        held: heldSymbols.has(r.symbol),
+      });
+    }
   }
 
   return { holdings, totalValue, totalPnl, latestRunDate, candidates };

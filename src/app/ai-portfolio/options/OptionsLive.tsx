@@ -60,6 +60,7 @@ export function OptionsLive({ initial }: { initial: OptionsDashboardData }) {
         data={{
           premiumIncome: state.totalPremiumIncome,
           realizedPnl: state.totalPnl,
+          maxDrawdown: state.maxDrawdown,
           collateralReserved: state.totalCollateral,
           maxCollateral: state.maxCollateral,
           openCount: state.totalOpenCount,

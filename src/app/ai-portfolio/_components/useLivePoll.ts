@@ -28,7 +28,7 @@ export function useLivePoll<T>(
         if (!res.ok) return;
         const body = (await res.json()) as { payload: T | null; fetched_at: string | null };
         if (!alive || body.payload == null) return;
-        setState(body.payload);
+        setState({ ...initial, ...body.payload });
         const d = body.fetched_at ? new Date(body.fetched_at) : new Date();
         updatedRef.current = d;
         setUpdatedAt(d);

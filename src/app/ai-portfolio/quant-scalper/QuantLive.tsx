@@ -49,19 +49,16 @@ export function QuantLive({ initial }: { initial: QuantState }) {
       .slice(0, 10)
       .map(([symbol, weight]) => ({ symbol, weight }));
 
+  const gates = state.gates ?? ({} as QuantState["gates"]);
   const gateRows: [string, string][] = [
-    ["RESEARCH", state.gates.research],
-    ...(state.gates.backtest_v3
-      ? [["BACKTEST v3", state.gates.backtest_v3] as [string, string]]
+    ["RESEARCH", gates.research ?? "—"],
+    ...(gates.backtest_v3 ? [["BACKTEST v3", gates.backtest_v3] as [string, string]] : []),
+    ...(gates.backtest_v4 ? [["BACKTEST v4", gates.backtest_v4] as [string, string]] : []),
+    ...(gates.backtest && !gates.backtest_v3
+      ? [["BACKTEST", gates.backtest] as [string, string]]
       : []),
-    ...(state.gates.backtest_v4
-      ? [["BACKTEST v4", state.gates.backtest_v4] as [string, string]]
-      : []),
-    ...(state.gates.backtest && !state.gates.backtest_v3
-      ? [["BACKTEST", state.gates.backtest] as [string, string]]
-      : []),
-    ["PAPER FORWARD", state.gates.paper],
-    ["LIVE MICRO", state.gates.live],
+    ["PAPER FORWARD", gates.paper ?? "—"],
+    ["LIVE MICRO", gates.live ?? "—"],
   ];
 
   const sleeveEntries = Object.entries(state.sleeve_weights ?? {});

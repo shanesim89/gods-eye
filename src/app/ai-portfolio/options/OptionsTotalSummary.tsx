@@ -1,6 +1,7 @@
 export type OptionsSummaryData = {
   premiumIncome: number;
   realizedPnl: number;
+  maxDrawdown: number;
   collateralReserved: number;
   maxCollateral: number;
   openCount: number;
@@ -63,6 +64,12 @@ export function OptionsTotalSummary({ data }: { data: OptionsSummaryData }) {
           <div style={{ fontSize: 8, letterSpacing: 2, color: "#8a7340", textTransform: "uppercase", marginBottom: 5 }}>REALIZED P&L</div>
           <div style={{ fontSize: 16, fontWeight: 700, color: pnlColor, fontVariantNumeric: "tabular-nums" }}>
             {data.realizedPnl > 0 ? "+" : ""}{usd(data.realizedPnl)}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 8, letterSpacing: 2, color: "#8a7340", textTransform: "uppercase", marginBottom: 5 }}>MAX DRAWDOWN</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#ff5470", fontVariantNumeric: "tabular-nums" }}>
+            {usd(data.maxDrawdown)}
           </div>
         </div>
         <div>
