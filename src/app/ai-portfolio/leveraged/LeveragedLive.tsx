@@ -13,13 +13,17 @@ function toneForAction(a: string): string {
   return "text-muted";
 }
 
+function num(v: number | null | undefined, fmt: (n: number) => string): string {
+  return v == null ? "—" : v === Infinity ? "∞" : fmt(v);
+}
+
 function statTiles(s: LeveragedStats): [string, string][] {
   return [
-    ["TRADES", `${s.trades}`],
-    ["PROFIT FACTOR", s.profit_factor === Infinity ? "∞" : s.profit_factor.toFixed(2)],
-    ["EXPECTANCY R", s.expectancy_r.toFixed(3)],
-    ["MAX DD", `${s.max_dd_pct.toFixed(1)}%`],
-    ["SHARPE (ann)", s.sharpe_ann.toFixed(2)],
+    ["TRADES", `${s.trades ?? 0}`],
+    ["PROFIT FACTOR", num(s.profit_factor, (n) => n.toFixed(2))],
+    ["EXPECTANCY R", num(s.expectancy_r, (n) => n.toFixed(3))],
+    ["MAX DD", num(s.max_dd_pct, (n) => `${n.toFixed(1)}%`)],
+    ["SHARPE (ann)", num(s.sharpe_ann, (n) => n.toFixed(2))],
   ];
 }
 
@@ -42,14 +46,13 @@ export function LeveragedLive({ initial }: { initial: LeveragedState }) {
         </span>
       </div>
 
-      {/* Unvalidated warning — this is not an edge, it's an experiment */}
+      {/* NO_TRADE — no params set has passed the gates, bot places no orders */}
       {!state.validated && (
-        <div className="border border-amber/40 bg-amber/5 p-3 mb-3 text-[12px] text-amber">
-          ⚠️ UNVALIDATED — no params set passed the walk-forward gates. Running the
-          best in-sample candidate anyway, which failed out-of-sample at every
-          window (backtest PF {state.backtest_stats.profit_factor.toFixed(2)},
-          expectancy {state.backtest_stats.expectancy_r.toFixed(3)}R). This is a
-          running experiment, not a validated edge.
+        <div className="border border-red/40 bg-red/5 p-3 mb-3 text-[12px] text-red">
+          🛑 NO_TRADE — no params set passed the walk-forward gates. The bot is
+          halted: it publishes status only and places no orders. Params and
+          backtest figures below are the last candidate on record, not what is
+          (or ever was) live.
         </div>
       )}
 

@@ -52,7 +52,7 @@ export default async function LeveragedPage() {
   return (
     <Panel
       title="LEVERAGED TQQQ/SQQQ"
-      meta="PAPER · NASDAQ 3× INTRADAY MOMENTUM · UNVALIDATED"
+      meta="PAPER · NASDAQ 3× INTRADAY MOMENTUM · NO_TRADE"
     >
       <LeveragedLive initial={state} />
     </Panel>
