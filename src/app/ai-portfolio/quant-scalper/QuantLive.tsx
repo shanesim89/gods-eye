@@ -65,7 +65,9 @@ export function QuantLive({ initial }: { initial: QuantState }) {
   const allocState = state.allocator;
   const priceEntries = Object.entries(state.prices ?? {}).slice(0, 10);
   const grossExposure = positions.reduce((s, p) => s + Math.abs(p.weight), 0);
-  const stale = secsAgo > 90;
+  // one-shot daily bot (~00:30 UTC), not a continuous poller — 90s threshold
+  // from the intraday dashboards doesn't fit; give it a day+buffer instead.
+  const stale = secsAgo > 36 * 3600;
 
   return (
     <>
