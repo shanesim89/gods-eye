@@ -63,7 +63,7 @@ export const ACTIVE_STRATEGIES = [
     href: "/ai-portfolio/leveraged",
     mode: "PAPER",
     asset: "TQQQ·SQQQ",
-    description: "Nasdaq 3x intraday momentum, EOD flatten — unvalidated (failed OOS), paper trading.",
+    description: "Nasdaq 3x intraday momentum, EOD flatten — halted, no validated params (NO_TRADE).",
   },
 ] as const satisfies readonly ActiveStrategy[];
 
