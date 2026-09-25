@@ -325,6 +325,62 @@ async function quantStatus(): Promise<BotStatus> {
   };
 }
 
+type MCScalpEqPayload = {
+  equity?: number;
+  weights?: Record<string, number>;
+  positions_usd?: Record<string, number>;
+  trades_today?: { symbol: string; side: string; usd: number; ts: string }[];
+  cycle_utc?: string | null;
+};
+
+async function mcscalpEqStatus(): Promise<BotStatus> {
+  const row = await cacheStatus("mcscalp_eq:live:state");
+  const p = (row?.payload as MCScalpEqPayload) ?? {};
+  const start = 10_000;
+  const equity = p.equity ?? start;
+  const pnl = equity - start;
+  const fetchedAt = row?.fetched_at ?? null;
+  const ageH = fetchedAt ? (Date.now() - new Date(fetchedAt).getTime()) / 3_600_000 : Infinity;
+
+  let health: BotHealth = "ok";
+  let healthNote: string | undefined;
+  if (!row) { health = "stale"; healthNote = "never published"; }
+  else if (ageH > 26) { health = "stale"; healthNote = `no run in ${Math.round(ageH)}h`; }
+
+  const weights = Object.entries(p.weights ?? {}).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  const holdings: HoldingRow[] = weights.slice(0, 6).map(([symbol, w]) => ({
+    label: symbol,
+    detail: `${w >= 0 ? "L" : "S"} ${(Math.abs(w) * 100).toFixed(1)}%`,
+    value: p.positions_usd?.[symbol],
+  }));
+
+  const recent: ActivityRow[] = (p.trades_today ?? []).slice(0, 12).map((t) => ({
+    ts: t.ts,
+    label: `${t.symbol} ${t.side.toUpperCase()}`,
+    detail: `$${t.usd.toLocaleString("en-US")}`,
+    tone: t.side === "sell" ? "sell" : "buy",
+  }));
+
+  return {
+    key: "mcscalp_eq",
+    label: "MCSCALP EQUITY",
+    href: "/ai-portfolio/mcscalp-eq",
+    mode: "PAPER",
+    asset: "10 US EQUITIES",
+    equityOrValue: equity,
+    valueLabel: "Paper equity",
+    pnl,
+    pnlPct: start > 0 ? (pnl / start) * 100 : null,
+    health,
+    healthNote,
+    lastActivity: p.cycle_utc ?? (fetchedAt ? new Date(fetchedAt).toISOString() : null),
+    holdings,
+    recent,
+    fallbackNote: recent.length === 0 ? "No rebalance crossed threshold today — positions held steady." : undefined,
+    openPositions: weights.length,
+  };
+}
+
 type LeveragedPayload = {
   equity?: number;
   market_open?: boolean;
@@ -587,16 +643,17 @@ export async function buildHomeState(userId: string): Promise<HomeState> {
     console.error("[overview] daily calendar failed:", e instanceof Error ? e.message : e);
     return [] as DailyCell[];
   });
-  const [crypto, options, quant, vulcan, universe, leveraged] = await Promise.all([
+  const [crypto, options, quant, vulcan, universe, leveraged, mcscalp_eq] = await Promise.all([
     cryptoStatus(userId).catch((e) => errorStatus("crypto", e)),
     optionsStatus(userId).catch((e) => errorStatus("options", e)),
     quantStatus().catch((e) => errorStatus("quant", e)),
     vulcanStatus(userId).catch((e) => errorStatus("vulcan", e)),
     universeStatus().catch((e) => errorStatus("universe", e)),
     leveragedStatus().catch((e) => errorStatus("leveraged", e)),
+    mcscalpEqStatus().catch((e) => errorStatus("mcscalp_eq", e)),
   ]);
 
-  const statuses: Record<BotKey, BotStatus> = { crypto, options, quant, vulcan, universe, leveraged };
+  const statuses: Record<BotKey, BotStatus> = { crypto, options, quant, vulcan, universe, leveraged, mcscalp_eq };
   const live = LIVE_STRATEGY_KEYS.map((key) => statuses[key]);
   const paper = PAPER_STRATEGY_KEYS.map((key) => statuses[key]);
   const visible = [...live, ...paper];

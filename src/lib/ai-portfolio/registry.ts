@@ -1,7 +1,7 @@
 export type StrategyMode = "LIVE" | "PAPER";
 
 type ActiveStrategy = {
-  key: "crypto" | "options" | "quant" | "vulcan" | "universe" | "leveraged";
+  key: "crypto" | "options" | "quant" | "vulcan" | "universe" | "leveraged" | "mcscalp_eq";
   label: string;
   dashboardLabel: string;
   href: string;
@@ -65,17 +65,27 @@ export const ACTIVE_STRATEGIES = [
     asset: "TQQQ·SQQQ",
     description: "Nasdaq 3x intraday momentum, EOD flatten — halted, no validated params (NO_TRADE).",
   },
+  {
+    key: "mcscalp_eq",
+    label: "MCSCALP EQUITY",
+    dashboardLabel: "MCSCALP-EQ",
+    href: "/ai-portfolio/mcscalp-eq",
+    mode: "PAPER",
+    asset: "10 US EQUITIES",
+    description: "Same TSMOM signal + Allocator as MCScalp, applied to equities — own Alpaca paper account.",
+  },
 ] as const satisfies readonly ActiveStrategy[];
 
 export type BotKey = (typeof ACTIVE_STRATEGIES)[number]["key"];
 
 export const LIVE_STRATEGY_KEYS = ["crypto"] as const satisfies readonly BotKey[];
-export const PAPER_STRATEGY_KEYS = ["quant", "options", "vulcan", "universe", "leveraged"] as const satisfies readonly BotKey[];
+export const PAPER_STRATEGY_KEYS = ["quant", "options", "vulcan", "universe", "leveraged", "mcscalp_eq"] as const satisfies readonly BotKey[];
 export const CALENDAR_STRATEGY_KEYS = ["quant", "options", "crypto", "vulcan", "universe"] as const satisfies readonly BotKey[];
 
 export const ACTIVE_STATE_CACHE_KEYS = [
   "quant:scrap:state",
   "leveraged-nasdaq",
+  "mcscalp_eq:live:state",
 ] as const;
 
 export const RETIRED_CACHE_KEYS = [

@@ -3,7 +3,7 @@ import { db } from "@/db/client";
 import { market_data_cache } from "@/db/schema";
 import type { BotKey } from "@/lib/ai-portfolio/registry";
 
-export const BRAIN_BOT_KEYS = ["quant", "options", "vulcan", "universe"] as const satisfies readonly BotKey[];
+export const BRAIN_BOT_KEYS = ["quant", "options", "vulcan", "universe", "mcscalp_eq"] as const satisfies readonly BotKey[];
 
 export type BrainAmendment = {
   status: string;
