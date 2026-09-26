@@ -11,13 +11,10 @@
             "id": "af64ed056511e756",
             "type": "leaf",
             "state": {
-              "type": "bases",
-              "state": {
-                "file": "Untitled.base",
-                "viewName": "Table"
-              },
-              "icon": "lucide-table",
-              "title": "Untitled"
+              "type": "graph",
+              "state": {},
+              "icon": "lucide-git-fork",
+              "title": "Graph view"
             }
           }
         ]
@@ -184,8 +181,8 @@
   },
   "active": "af64ed056511e756",
   "lastOpenFiles": [
-    "crypto-brain (bots).md",
     "Untitled.base",
+    "crypto-brain (bots).md",
     "quant-scrap/brain/options_db.py.tmp.29844.2903e1c84e2f",
     "quant-scrap/brain/options_params_cache.json",
     "quant-scrap/brain/__pycache__/options_db.cpython-314.pyc",
