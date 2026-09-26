@@ -14,8 +14,17 @@ import {
   uniqueIndex,
   foreignKey,
   bigserial,
+  real,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+
+// Neon's default demo table (auto-created per project). Kept here only so
+// drizzle-kit push doesn't propose dropping it — unused by the app.
+export const playing_with_neon = pgTable("playing_with_neon", {
+  id: integer("id").primaryKey(),
+  name: text("name").notNull(),
+  value: real("value"),
+});
 
 export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -139,6 +148,15 @@ export const fx_rates_cache = pgTable(
 export const market_data_cache = pgTable("market_data_cache", {
   ticker: text("ticker").primaryKey(),
   payload: jsonb("payload").notNull(),
+  fetched_at: timestamp("fetched_at").defaultNow().notNull(),
+});
+
+export const market_outlook_articles = pgTable("market_outlook_articles", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  source: text("source").notNull(),
+  url: text("url").notNull().unique(),
+  title: text("title").notNull(),
+  content: text("content").notNull(),
   fetched_at: timestamp("fetched_at").defaultNow().notNull(),
 });
 

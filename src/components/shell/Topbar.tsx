@@ -10,6 +10,7 @@ const NAV = [
   { href: "/indicators", label: "Indicators", match: (p: string) => p.startsWith("/indicators") },
   { href: "/guru", label: "Guru", match: (p: string) => p.startsWith("/guru") },
   { href: "/carousel", label: "Carousel", match: (p: string) => p.startsWith("/carousel") },
+  { href: "/market-outlook", label: "Market Outlook", match: (p: string) => p.startsWith("/market-outlook") },
   { href: "/settings", label: "Settings", match: (p: string) => p.startsWith("/settings") },
 ];
 
@@ -62,10 +63,10 @@ export function Topbar() {
               <Link
                 key={n.label}
                 href={n.href}
-                className={`shrink-0 px-2.5 py-1 rounded-[7px] transition-colors ${
+                className={`shrink-0 px-2.5 py-1 rounded-[7px] transition-all duration-150 ${
                   active
                     ? "bg-cyan text-bg font-semibold"
-                    : "text-dim hover:text-text"
+                    : "text-dim hover:text-text hover:bg-cyan/10 hover:shadow-[inset_0_0_0_1px_rgba(34,211,238,0.3)]"
                 }`}
               >
                 {n.label}
