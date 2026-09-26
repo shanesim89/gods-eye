@@ -38,7 +38,7 @@ const STICKERS = [
 ];
 const LOGO = "/logo-watermark.png";
 
-export default function CarouselGenerator() {
+export default function CarouselGenerator({ quarterlyReportLink }) {
   const initialized = useRef(false);
 
   useEffect(() => {
@@ -947,6 +947,8 @@ export default function CarouselGenerator() {
           background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
         }
         .carousel-tool .step-num{ font-size: 18px; color: var(--dim); line-height: 1; font-weight: 600; }
+        .carousel-tool .optional-step{ border-style: dashed; }
+        .carousel-tool .optional-step .step-num{ color: var(--cyan); }
         .carousel-tool .step-body h2{ font-weight: 600; font-size: 15px; margin: 0 0 4px; color: var(--text); }
         .carousel-tool .step-body > p.hint{ margin: 0 0 16px; color: var(--muted); font-size: 12.5px; }
 
@@ -1087,8 +1089,8 @@ export default function CarouselGenerator() {
           </div>
         </div>
 
-        <div className="step" id="infoStep">
-          <div className="step-num">4</div>
+        <div className="step optional-step" id="infoStep">
+          <div className="step-num">＋</div>
           <div className="step-body">
             <h2>Impact infographic (optional)</h2>
             <p className="hint">Separate from the carousel above. Uses your raw thought from step 1 to generate a single branded graphic explaining the situation and how it affects your audience.</p>
@@ -1102,6 +1104,8 @@ export default function CarouselGenerator() {
             </div>
           </div>
         </div>
+
+        {quarterlyReportLink && <div style={{marginTop:'16px'}}>{quarterlyReportLink}</div>}
 
         <footer className="foot">Built for SHANE boss · every carousel generated fresh</footer>
       </div>
