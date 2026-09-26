@@ -1,0 +1,237 @@
+/* ── fun fact: a real speech bubble, not a flat banner ────────
+   A deliberate break from the report's sharp-corner institutional grid —
+   one moment of levity per page, not a redesign of the whole system. */
+.funFactWrap {
+  padding-bottom: 14px;
+  margin-bottom: 6px;
+}
+.funFactBubble {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #fdf3e1;
+  border: 1.5px solid #eec27e;
+  border-radius: 12px;
+  padding: 10px 16px 10px 12px;
+  box-shadow: 0 3px 10px -4px rgba(185, 119, 14, 0.35);
+}
+.funFactBubble::after {
+  content: "";
+  position: absolute;
+  left: 26px;
+  bottom: -7px;
+  width: 13px;
+  height: 13px;
+  background: #fdf3e1;
+  border-right: 1.5px solid #eec27e;
+  border-bottom: 1.5px solid #eec27e;
+  border-radius: 0 0 3px 0;
+  transform: rotate(45deg);
+}
+.funFactIcon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: #f5b545;
+  color: #5c3d05;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.funFactTag {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #b9770e;
+  margin-bottom: 3px;
+}
+.funFactText {
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #5c4409;
+}
+.funFactText strong {
+  color: #0e2740;
+}
+.funFactCaveat {
+  font-size: 7.5px;
+  font-style: italic;
+  color: #a5895a;
+  margin-top: 3px;
+}
+
+.intro {
+  background: #f2f6f3;
+  border-left: 3px solid #159a94;
+  padding: 10px 16px;
+  margin-bottom: 14px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #24343f;
+}
+
+.funds {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 10px 26px;
+}
+.fund {
+  display: flex;
+  flex-direction: column;
+}
+.fundHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid #0e2740;
+  margin-bottom: 8px;
+}
+.fundName {
+  font-family: var(--font-report-display), serif;
+  font-weight: 600;
+  font-size: 13px;
+  color: #0e2740;
+  line-height: 1.15;
+}
+.fundFreq {
+  flex: none;
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 7px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #7c8b98;
+}
+
+/* ── yield hero ─────────────────────────────────────────────── */
+.yieldRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.yieldValue {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 28px;
+  font-weight: 700;
+  color: #0f6e56;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.yieldCaption {
+  font-size: 8px;
+  line-height: 1.2;
+  color: #7c8b98;
+}
+.verified {
+  margin-left: auto;
+  align-self: center;
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 7px;
+  letter-spacing: 0.5px;
+  font-weight: 700;
+  color: #0f6e56;
+  background: #e1f5ee;
+  padding: 2px 5px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+.block {
+  padding: 5px 0;
+  border-bottom: 1px solid #e4e9ed;
+}
+.blockLabel {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 7.5px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: #7c8b98;
+  margin-bottom: 3px;
+}
+.blockText {
+  font-size: 9.3px;
+  line-height: 1.4;
+  color: #24343f;
+}
+
+.quarterStat {
+  flex: none;
+  align-self: center;
+  text-align: center;
+  padding: 0 4px;
+  border-left: 1px solid #e4e9ed;
+}
+.quarterCaption {
+  font-size: 7px;
+  color: #7c8b98;
+  margin-top: 1px;
+}
+.moveUp,
+.moveDown,
+.moveFlat {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.moveUp { color: #1f8a4c; }
+.moveDown { color: #c0392b; }
+.moveFlat { color: #93a1ac; }
+
+.sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.sourceTag {
+  font-size: 8px;
+  background: #eef2f6;
+  color: #3d4a56;
+  padding: 2px 6px;
+  border-radius: 2px;
+}
+
+.unverified {
+  margin-left: auto;
+  align-self: center;
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 7px;
+  letter-spacing: 0.5px;
+  font-weight: 700;
+  color: #b9770e;
+  background: #fbf1de;
+  padding: 2px 5px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+.checkStrip {
+  margin-top: auto;
+  padding-top: 6px;
+  font-size: 7.5px;
+  color: #93a1ac;
+  font-style: italic;
+}
+.sourceLink {
+  color: #159a94;
+  font-style: normal;
+  text-decoration: underline;
+}
+
+.knowNote {
+  margin-top: 12px;
+  background: #eef2f6;
+  padding: 9px 14px;
+  font-size: 9px;
+  line-height: 1.4;
+  color: #3d4a56;
+}
+.knowNote strong { color: #0e2740; }

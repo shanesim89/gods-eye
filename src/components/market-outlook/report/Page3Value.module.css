@@ -1,0 +1,88 @@
+.section {
+  margin-bottom: 16px;
+}
+.sectionLabel {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #7c8b98;
+  margin-bottom: 7px;
+}
+
+table.tbl {
+  width: 100%;
+  border-collapse: collapse;
+}
+.tbl thead th {
+  text-align: left;
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 8.5px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #7c8b98;
+  font-weight: 500;
+  padding: 0 12px 6px 0;
+  border-bottom: 1px solid #0e2740;
+}
+.tbl tbody td {
+  padding: 7px 12px 7px 0;
+  border-bottom: 1px solid #e4e9ed;
+  vertical-align: top;
+  font-size: 11px;
+  color: #3d4a56;
+  line-height: 1.4;
+}
+.tbl tbody tr:last-child td {
+  border-bottom: none;
+}
+.nameCell {
+  font-family: var(--font-report-display), serif;
+  font-weight: 600;
+  font-size: 13px;
+  color: #0e2740;
+  white-space: nowrap;
+  width: 1%;
+}
+.ratingCell {
+  white-space: nowrap;
+  width: 1%;
+}
+.pillCell {
+  white-space: nowrap;
+  width: 1%;
+}
+.pill {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 8px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-weight: 700;
+  padding: 3px 7px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.pill.good { background: #e7f4ec; color: #1f8a4c; }
+.pill.mid { background: #fbf1de; color: #b9770e; }
+.pill.low { background: #fbe9e7; color: #c0392b; }
+
+.footnote {
+  margin-top: 4px;
+  font-size: 9.5px;
+  font-style: italic;
+  color: #93a1ac;
+}
+
+.methodBox {
+  /* Fixed gap, not margin-top:auto — see Page2Quarter.module.css .bottomRow
+     for why: auto now actually pins to bottom (.body is flex column), which
+     leaves an inconsistent gap above depending on row count. */
+  margin-top: 12px;
+  flex: none;
+  background: #eef2f6;
+  padding: 11px 18px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #3d4a56;
+}
+.methodBox strong { color: #0e2740; }

@@ -1,0 +1,241 @@
+/* A4 portrait at 96dpi = 794 x 1123px. Designed 1:1 so screen preview and the
+   exported PDF share proportions. The wrapper scales it to fit its container. */
+.page {
+  position: relative;
+  width: 794px;
+  height: 1123px;
+  overflow: hidden;
+  background: #0a1a2c;
+  color: #eef4f8;
+  font-family: var(--font-report-body), system-ui, sans-serif;
+  flex: none;
+}
+
+.photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 38%;
+  /* Modest contrast/saturation lift — reads as a crisper, richer print photo
+     without the halo artefacts a true unsharp-mask filter would risk. */
+  filter: contrast(1.06) saturate(1.1);
+}
+
+/* Navy scrim: darken top slightly (eyebrow legibility) and heavily bottom-up
+   (masthead + adviser band sit on solid navy). Kept blue, never grey-black. */
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(8, 22, 38, 0.62) 0%,
+    rgba(8, 22, 38, 0.1) 20%,
+    rgba(8, 22, 38, 0.08) 40%,
+    rgba(8, 22, 38, 0.72) 68%,
+    rgba(7, 19, 33, 0.94) 86%,
+    rgba(6, 17, 30, 0.98) 100%
+  );
+}
+
+.frame {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  padding: 56px 58px 48px;
+  /* Photos vary wildly in brightness at any given point — a subtle uniform
+     shadow keeps every text layer legible without re-tuning the scrim per photo. */
+  text-shadow: 0 1px 3px rgba(4, 12, 22, 0.5), 0 1px 14px rgba(4, 12, 22, 0.35);
+}
+
+/* ── top band ─────────────────────────────────────────────── */
+.top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.firm {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 12px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: #d3e2ec;
+  line-height: 1.4;
+  max-width: 40ch;
+}
+.logoImg {
+  height: 34px;
+  width: auto;
+  object-fit: contain;
+}
+.monogram {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  font-family: var(--font-report-display), serif;
+  font-weight: 600;
+  font-size: 19px;
+  color: #ffffff;
+}
+.hair {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.26);
+  margin-top: 18px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* ── masthead lockup ──────────────────────────────────────── */
+.location {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 12px;
+  letter-spacing: 3.5px;
+  text-transform: uppercase;
+  color: #4fc7be;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 22px;
+}
+.location::before {
+  content: "";
+  width: 26px;
+  height: 1px;
+  background: #4fc7be;
+}
+
+.masthead {
+  font-family: var(--font-report-display), serif;
+  font-weight: 600;
+  font-size: 84px;
+  line-height: 0.98;
+  letter-spacing: -0.015em;
+  color: #ffffff;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.issue {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 26px;
+}
+.issueRule {
+  width: 54px;
+  height: 3px;
+  background: #159a94;
+  flex: none;
+}
+.issueText {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 13px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #cddfea;
+}
+
+.subtitle {
+  font-family: var(--font-report-body), sans-serif;
+  font-weight: 300;
+  font-size: 21px;
+  line-height: 1.4;
+  color: #cbdce7;
+  max-width: 30ch;
+  margin: 20px 0 0;
+}
+
+/* ── Portrait overlay (Option B) ────────────────────────────
+   No panel — the cover photo stays whole and untouched underneath. The
+   adviser cutout sits directly over it, large, at a plain uniform opacity
+   (set inline, adjustable via the Opacity slider in ReportSettings) so the
+   background reads through him instead of a solid block covering it.
+   `opacity` is a real CSS property html2canvas renders identically to a
+   browser — no gradient-mask trickery needed here, unlike the old strip. */
+.portraitImg {
+  position: absolute;
+  right: -6%;
+  bottom: 0;
+  width: 62%;
+  height: auto;
+  z-index: 1;
+  transform-origin: center bottom;
+  filter: contrast(1.05) saturate(1.05);
+}
+/* Text columns stay clear of the panel when a portrait is present. */
+.textNarrow {
+  max-width: 56%;
+}
+
+/* ── adviser band ─────────────────────────────────────────── */
+.adviser {
+  margin-top: 40px;
+  padding-top: 22px;
+  border-top: 1px solid rgba(255, 255, 255, 0.22);
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  position: relative;
+  z-index: 2;
+}
+.prepLabel {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 10px;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: #8fabc0;
+  margin-bottom: 7px;
+}
+.who {
+  font-family: var(--font-report-display), serif;
+  font-weight: 600;
+  font-size: 22px;
+  color: #ffffff;
+  line-height: 1.1;
+}
+.role {
+  font-size: 13px;
+  color: #b6cad8;
+  margin-top: 3px;
+}
+.contact {
+  text-align: right;
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  color: #b6cad8;
+  line-height: 1.7;
+}
+
+/* ── footer credit + disclaimer ───────────────────────────── */
+.foot {
+  margin-top: 22px;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-end;
+  position: relative;
+  z-index: 2;
+}
+.disclaimer {
+  font-size: 8.5px;
+  line-height: 1.5;
+  color: #7c94a8;
+  max-width: 62ch;
+}
+.credit {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 8.5px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #64798c;
+  white-space: nowrap;
+}
